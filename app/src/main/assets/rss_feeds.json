@@ -1,0 +1,18 @@
+[
+  {"name": "BBC World", "url": "http://feeds.bbci.co.uk/news/world/rss.xml", "country": "GB", "language": "en", "lat": 51.51, "lon": -0.12, "scope": "INTERNATIONAL"},
+  {"name": "Al Jazeera", "url": "https://www.aljazeera.com/xml/rss/all.xml", "country": "QA", "language": "en", "lat": 25.29, "lon": 51.53, "scope": "INTERNATIONAL"},
+  {"name": "France 24", "url": "https://www.france24.com/en/rss", "country": "FR", "language": "en", "lat": 48.85, "lon": 2.35, "scope": "INTERNATIONAL"},
+  {"name": "DW News", "url": "https://rss.dw.com/rdf/rss-en-all", "country": "DE", "language": "en", "lat": 50.73, "lon": 7.09, "scope": "INTERNATIONAL"},
+  {"name": "NHK World", "url": "https://www3.nhk.or.jp/rss/news/cat0.xml", "country": "JP", "language": "en", "lat": 35.68, "lon": 139.69, "scope": "NATIONAL"},
+  {"name": "Times of India", "url": "https://timesofindia.indiatimes.com/rssfeedstopstories.cms", "country": "IN", "language": "en", "lat": 19.07, "lon": 72.87, "scope": "NATIONAL"},
+  {"name": "South China Morning Post", "url": "https://www.scmp.com/rss/91/feed", "country": "HK", "language": "en", "lat": 22.28, "lon": 114.15, "scope": "NATIONAL"},
+  {"name": "The Hindu", "url": "https://www.thehindu.com/feeder/default.rss", "country": "IN", "language": "en", "lat": 13.08, "lon": 80.27, "scope": "NATIONAL"},
+  {"name": "Dawn Pakistan", "url": "https://www.dawn.com/feed", "country": "PK", "language": "en", "lat": 24.86, "lon": 67.01, "scope": "NATIONAL"},
+  {"name": "Bangkok Post", "url": "https://www.bangkokpost.com/rss/data/topstories.xml", "country": "TH", "language": "en", "lat": 13.76, "lon": 100.50, "scope": "NATIONAL"},
+  {"name": "Kyiv Independent", "url": "https://kyivindependent.com/feed/", "country": "UA", "language": "en", "lat": 50.45, "lon": 30.52, "scope": "NATIONAL"},
+  {"name": "The Moscow Times", "url": "https://www.themoscowtimes.com/rss/news", "country": "RU", "language": "en", "lat": 55.75, "lon": 37.62, "scope": "NATIONAL"},
+  {"name": "ABC Australia", "url": "https://www.abc.net.au/news/feed/2942460/rss.xml", "country": "AU", "language": "en", "lat": -33.87, "lon": 151.21, "scope": "NATIONAL"},
+  {"name": "Mail & Guardian SA", "url": "https://mg.co.za/feed/", "country": "ZA", "language": "en", "lat": -26.20, "lon": 28.04, "scope": "NATIONAL"},
+  {"name": "Politico EU", "url": "https://www.politico.eu/feed/", "country": "BE", "language": "en", "lat": 50.85, "lon": 4.35, "scope": "REGIONAL"},
+  {"name": "Straits Times Asia", "url": "https://www.straitstimes.com/news/asia/rss.xml", "country": "SG", "language": "en", "lat": 1.35, "lon": 103.82, "scope": "REGIONAL"}
+]
