@@ -119,8 +119,11 @@ class RssDataSource @Inject constructor(
         Log.d("GlobeNews", "RSS: fetching ${feeds.size} enabled managed feeds ($brokenCount broken)")
 
         val allItems = Collections.synchronizedList(mutableListOf<RssItem>())
+        var successCount = 0
+        var failCount = 0
 
-        feeds.chunked(10).forEachIndexed { batchIdx, batch ->
+        val batches = feeds.chunked(10)
+        batches.forEachIndexed { batchIdx, batch ->
             coroutineScope {
                 batch.map { feed ->
                     async {
@@ -128,23 +131,25 @@ class RssDataSource @Inject constructor(
                             val items = fetchManagedFeed(feed)
                             managedFeedDao.recordSuccess(feed.id, System.currentTimeMillis())
                             allItems.addAll(items)
+                            successCount++
                         } catch (e: Exception) {
                             managedFeedDao.recordFailure(
                                 feed.id,
                                 System.currentTimeMillis(),
                                 e.message ?: "Unknown error"
                             )
+                            failCount++
                             Log.w("GlobeNews", "RSS FAIL: ${feed.name} — ${e.message}")
                         }
                     }
                 }.awaitAll()
             }
-            if (batchIdx < feeds.chunked(10).size - 1) {
+            if (batchIdx < batches.size - 1) {
                 delay(200)
             }
         }
 
-        Log.d("GlobeNews", "RSS: ${allItems.size} items from ${feeds.size} managed feeds")
+        Log.d("GlobeNews", "RSS: Done. $successCount OK, $failCount failed, ${allItems.size} total items from ${feeds.size} feeds")
         return allItems
     }
 
@@ -180,6 +185,10 @@ class RssDataSource @Inject constructor(
             .build()
 
         val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+            response.close()
+            throw java.io.IOException("HTTP ${response.code} for ${config.name}")
+        }
         val body = response.body?.string() ?: return@withContext emptyList()
         parseRss(body, config)
     }
