@@ -19,9 +19,13 @@ import com.globenews.domain.model.NewsCategory
 import com.globenews.domain.model.NewsStory
 import com.globenews.domain.model.QueryRegion
 import com.globenews.domain.repository.NewsRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.time.Duration
 import java.time.Instant
 import javax.inject.Inject
@@ -35,7 +39,8 @@ class NewsRepositoryImpl @Inject constructor(
     private val newsApiDataSource: NewsApiDataSource,
     private val gNewsDataSource: GNewsDataSource,
     private val fallbackDataSource: FallbackDataSource,
-    private val managedFeedDao: ManagedFeedDao
+    private val managedFeedDao: ManagedFeedDao,
+    private val okHttpClient: OkHttpClient
 ) : NewsRepository {
 
     companion object {
@@ -52,6 +57,7 @@ class NewsRepositoryImpl @Inject constructor(
 
     // Cache for RSS feed results (shared across all view paths)
     private var rssCache: List<NewsStory> = emptyList()
+    private var networkTestDone = false
     private var rssCacheTime: Instant = Instant.EPOCH
 
     override fun getStoriesForView(
@@ -105,6 +111,23 @@ class NewsRepositoryImpl @Inject constructor(
             }
         } else {
             Log.d(TAG, "REPO: skipping fallback, already have ${(current as Result.Success).data.size} stories")
+        }
+
+        // One-time network connectivity test
+        if (!networkTestDone) {
+            networkTestDone = true
+            try {
+                withContext(Dispatchers.IO) {
+                    val testUrl = "https://api.gdeltproject.org/api/v2/doc/doc?query=news&mode=artlist&maxrecords=1&format=json"
+                    val request = Request.Builder().url(testUrl).build()
+                    val response = okHttpClient.newCall(request).execute()
+                    val bodySnippet = response.body?.string()?.take(200) ?: "(empty body)"
+                    Log.e("GlobeNews", ">>> NETWORK TEST: HTTP ${response.code} — $bodySnippet")
+                    response.close()
+                }
+            } catch (e: Exception) {
+                Log.e("GlobeNews", ">>> NETWORK TEST FAILED: ${e.javaClass.simpleName}: ${e.message}")
+            }
         }
 
         // Now try to fetch fresh data from network sources
@@ -263,13 +286,13 @@ class NewsRepositoryImpl @Inject constructor(
 
             // Only replace fallback if we got real network results
             if (deduped.isNotEmpty()) {
-                Log.d("GlobeNews", "REPO: emitting ${deduped.size} network stories to flow")
+                Log.e("GlobeNews", ">>> LIVE DATA OK: ${deduped.size} stories replacing fallback")
                 storiesFlow.value = Result.Success(deduped)
             } else {
-                Log.d("GlobeNews", "REPO: no network stories, keeping fallback")
+                Log.e("GlobeNews", ">>> LIVE DATA FAILED: 0 network stories. ALL sources returned empty. App is showing FALLBACK ONLY. Check GDELT/RSS errors above.")
             }
         } catch (e: Exception) {
-            Log.e("GlobeNews", "REPO: EXCEPTION in refreshStories: ${e.message}", e)
+            Log.e("GlobeNews", ">>> LIVE DATA EXCEPTION: ${e.javaClass.simpleName}: ${e.message}", e)
             // Fallback was already emitted at start, so just log the error
         }
     }
