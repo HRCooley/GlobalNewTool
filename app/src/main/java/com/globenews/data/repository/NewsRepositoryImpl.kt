@@ -18,6 +18,7 @@ import com.globenews.domain.model.GlobeView
 import com.globenews.domain.model.NewsCategory
 import com.globenews.domain.model.NewsStory
 import com.globenews.domain.model.QueryRegion
+import com.globenews.domain.repository.DiagnosticInfo
 import com.globenews.domain.repository.NewsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -49,6 +50,8 @@ class NewsRepositoryImpl @Inject constructor(
 
     private val storiesFlow = MutableStateFlow<Result<List<NewsStory>>>(Result.Loading)
     private val bookmarks = mutableSetOf<String>()
+    private val _diagnostics = MutableStateFlow(DiagnosticInfo())
+    override val diagnostics: StateFlow<DiagnosticInfo> = _diagnostics
 
     // Cache for global grid results
     private var globalGridCache: List<NewsStory> = emptyList()
@@ -116,6 +119,7 @@ class NewsRepositoryImpl @Inject constructor(
         // One-time network connectivity test
         if (!networkTestDone) {
             networkTestDone = true
+            _diagnostics.value = _diagnostics.value.copy(networkTest = "Testing...", pipelineSummary = "Fetching live data...")
             try {
                 withContext(Dispatchers.IO) {
                     val testUrl = "https://api.gdeltproject.org/api/v2/doc/doc?query=news&mode=artlist&maxrecords=1&format=json"
@@ -123,10 +127,12 @@ class NewsRepositoryImpl @Inject constructor(
                     val response = okHttpClient.newCall(request).execute()
                     val bodySnippet = response.body?.string()?.take(200) ?: "(empty body)"
                     Log.e("GlobeNews", ">>> NETWORK TEST: HTTP ${response.code} — $bodySnippet")
+                    _diagnostics.value = _diagnostics.value.copy(networkTest = "OK — HTTP ${response.code}")
                     response.close()
                 }
             } catch (e: Exception) {
                 Log.e("GlobeNews", ">>> NETWORK TEST FAILED: ${e.javaClass.simpleName}: ${e.message}")
+                _diagnostics.value = _diagnostics.value.copy(networkTest = "FAILED: ${e.javaClass.simpleName}: ${e.message}")
             }
         }
 
@@ -150,6 +156,7 @@ class NewsRepositoryImpl @Inject constructor(
                     var googleCount = 0
 
                     // GDELT — wrapped so RSS still runs if GDELT fails
+                    _diagnostics.value = _diagnostics.value.copy(gdeltStatus = "Fetching ${GLOBAL_GRID.size} regions...")
                     try {
                         Log.d(TAG, "REPO: fetching GDELT for ${GLOBAL_GRID.size} global regions...")
                         val gdeltResults = gdeltDataSource.fetchForRegions(
@@ -163,15 +170,19 @@ class NewsRepositoryImpl @Inject constructor(
                         gdeltCount = gdeltStories.size
                         Log.d(TAG, "REPO: GDELT mapped to $gdeltCount stories")
                         stories.addAll(gdeltStories)
+                        _diagnostics.value = _diagnostics.value.copy(gdeltStatus = "$gdeltCount stories from ${gdeltResults.size} articles")
                     } catch (e: Exception) {
                         Log.e(TAG, "REPO: GDELT global fetch failed: ${e.message}")
+                        _diagnostics.value = _diagnostics.value.copy(gdeltStatus = "FAILED: ${e.message}")
                     }
 
                     // Managed RSS feeds (297 bundled + user custom) — cached
+                    _diagnostics.value = _diagnostics.value.copy(rssStatus = "Fetching feeds...")
                     val rssStories = getCachedRssStories()
                     rssCount = rssStories.size
                     Log.d(TAG, "REPO: RSS contributed $rssCount stories")
                     stories.addAll(rssStories)
+                    _diagnostics.value = _diagnostics.value.copy(rssStatus = "$rssCount stories")
 
                     // Optional sources
                     if (newsApiDataSource.isAvailable) {
@@ -288,11 +299,22 @@ class NewsRepositoryImpl @Inject constructor(
             if (deduped.isNotEmpty()) {
                 Log.e("GlobeNews", ">>> LIVE DATA OK: ${deduped.size} stories replacing fallback")
                 storiesFlow.value = Result.Success(deduped)
+                _diagnostics.value = _diagnostics.value.copy(
+                    liveTotal = "${deduped.size} live stories (from ${stories.size} pre-dedup)",
+                    pipelineSummary = "LIVE — ${deduped.size} stories from network sources"
+                )
             } else {
                 Log.e("GlobeNews", ">>> LIVE DATA FAILED: 0 network stories. ALL sources returned empty. App is showing FALLBACK ONLY. Check GDELT/RSS errors above.")
+                _diagnostics.value = _diagnostics.value.copy(
+                    liveTotal = "0 live stories",
+                    pipelineSummary = "FALLBACK ONLY — all network sources returned 0. Check GDELT and RSS status above."
+                )
             }
         } catch (e: Exception) {
             Log.e("GlobeNews", ">>> LIVE DATA EXCEPTION: ${e.javaClass.simpleName}: ${e.message}", e)
+            _diagnostics.value = _diagnostics.value.copy(
+                pipelineSummary = "EXCEPTION: ${e.javaClass.simpleName}: ${e.message}"
+            )
             // Fallback was already emitted at start, so just log the error
         }
     }
