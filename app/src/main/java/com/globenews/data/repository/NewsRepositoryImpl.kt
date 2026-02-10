@@ -324,8 +324,10 @@ class NewsRepositoryImpl @Inject constructor(
             val rssItems = rssDataSource.fetchAllManagedFeeds()
             val rssStories = rssItems.map { StoryMappers.fromRss(it) }
             Log.d(TAG, "REPO: fresh RSS fetch returned ${rssStories.size} stories")
-            rssCache = rssStories
-            rssCacheTime = Instant.now()
+            if (rssStories.isNotEmpty()) {
+                rssCache = rssStories
+                rssCacheTime = Instant.now()
+            }
             rssStories
         } catch (e: Exception) {
             Log.e(TAG, "REPO: managed RSS fetch failed: ${e.message}")

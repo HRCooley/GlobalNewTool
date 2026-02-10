@@ -95,7 +95,26 @@ class RssDataSource @Inject constructor(
      * Skips feeds with 10+ consecutive failures.
      */
     suspend fun fetchAllManagedFeeds(): List<RssItem> {
-        val feeds = managedFeedDao.getEnabledFeeds().filter { it.consecutiveFailures < 10 }
+        var feeds = managedFeedDao.getEnabledFeeds().filter { it.consecutiveFailures < 10 }
+
+        // On first launch, feed import runs async and may not be done yet.
+        // Wait up to 10s for feeds to appear in Room.
+        if (feeds.isEmpty()) {
+            Log.d("GlobeNews", "RSS: 0 feeds in DB, waiting for import...")
+            for (attempt in 1..10) {
+                delay(1000)
+                feeds = managedFeedDao.getEnabledFeeds().filter { it.consecutiveFailures < 10 }
+                if (feeds.isNotEmpty()) {
+                    Log.d("GlobeNews", "RSS: import ready after ${attempt}s — ${feeds.size} feeds")
+                    break
+                }
+            }
+            if (feeds.isEmpty()) {
+                Log.w("GlobeNews", "RSS: still 0 feeds after 10s wait, returning empty")
+                return emptyList()
+            }
+        }
+
         val brokenCount = managedFeedDao.getBrokenCount()
         Log.d("GlobeNews", "RSS: fetching ${feeds.size} enabled managed feeds ($brokenCount broken)")
 
