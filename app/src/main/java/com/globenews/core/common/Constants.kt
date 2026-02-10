@@ -22,6 +22,7 @@ object Constants {
     // zoom < 4 = world view, 4-8 = continental, >8 = city/region
     const val ZOOM_WORLD_THRESHOLD = 4.0
     const val ZOOM_LOCAL_THRESHOLD = 8.0
+    const val ZOOM_HYSTERESIS = 0.3
 
     const val DEDUP_TITLE_OVERLAP_THRESHOLD = 0.8
     const val DEDUP_TIME_WINDOW_HOURS = 12L

@@ -13,6 +13,7 @@ import com.globenews.domain.usecase.GetStoriesForViewUseCase
 import com.globenews.domain.usecase.RefreshStoriesUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +23,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+enum class ZoomTier { WORLD, CONTINENTAL, LOCAL }
 
 data class GlobeUiState(
     val stories: List<NewsStory> = emptyList(),
@@ -48,6 +51,8 @@ class GlobeViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     private var observeJob: Job? = null
+    private var refreshJob: Job? = null
+    private var currentZoomTier: ZoomTier = ZoomTier.WORLD
 
     init {
         Log.d("GlobeNews", "VIEWMODEL: init called, triggering initial fetch")
@@ -100,8 +105,44 @@ class GlobeViewModel @Inject constructor(
     fun onCameraMove(view: GlobeView) {
         Log.d("GlobeNews", "VIEWMODEL: onCameraMove lat=${view.latitude}, lon=${view.longitude}, zoom=${view.zoom}")
         _uiState.update { it.copy(currentView = view) }
+
+        // Zoom hysteresis: only change tier if zoom crosses threshold ± buffer
+        val newTier = resolveZoomTier(view.zoom)
+        val tierChanged = newTier != currentZoomTier
+        if (tierChanged) {
+            Log.d("GlobeNews", "VIEWMODEL: zoom tier changed $currentZoomTier -> $newTier")
+            currentZoomTier = newTier
+        }
+
         observeStories()
-        loadStories()
+
+        // Debounce refresh: cancel previous, wait 300ms
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
+            delay(300)
+            loadStories()
+        }
+    }
+
+    private fun resolveZoomTier(zoom: Double): ZoomTier {
+        val h = Constants.ZOOM_HYSTERESIS
+        return when (currentZoomTier) {
+            ZoomTier.WORLD -> when {
+                zoom > Constants.ZOOM_LOCAL_THRESHOLD + h -> ZoomTier.LOCAL
+                zoom > Constants.ZOOM_WORLD_THRESHOLD + h -> ZoomTier.CONTINENTAL
+                else -> ZoomTier.WORLD
+            }
+            ZoomTier.CONTINENTAL -> when {
+                zoom > Constants.ZOOM_LOCAL_THRESHOLD + h -> ZoomTier.LOCAL
+                zoom < Constants.ZOOM_WORLD_THRESHOLD - h -> ZoomTier.WORLD
+                else -> ZoomTier.CONTINENTAL
+            }
+            ZoomTier.LOCAL -> when {
+                zoom < Constants.ZOOM_WORLD_THRESHOLD - h -> ZoomTier.WORLD
+                zoom < Constants.ZOOM_LOCAL_THRESHOLD - h -> ZoomTier.CONTINENTAL
+                else -> ZoomTier.LOCAL
+            }
+        }
     }
 
     fun onCategorySelected(category: NewsCategory) {

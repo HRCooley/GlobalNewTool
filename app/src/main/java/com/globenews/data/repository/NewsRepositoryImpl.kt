@@ -50,6 +50,10 @@ class NewsRepositoryImpl @Inject constructor(
     private var globalGridCacheTime: Instant = Instant.EPOCH
     private var globalGridCacheCategory: NewsCategory = NewsCategory.ALL
 
+    // Cache for RSS feed results (shared across all view paths)
+    private var rssCache: List<NewsStory> = emptyList()
+    private var rssCacheTime: Instant = Instant.EPOCH
+
     override fun getStoriesForView(
         view: GlobeView,
         category: NewsCategory
@@ -83,18 +87,24 @@ class NewsRepositoryImpl @Inject constructor(
     override suspend fun refreshStories(view: GlobeView, category: NewsCategory) {
         Log.d("GlobeNews", "REPO: refreshStories called, zoom=${view.zoom}, category=$category")
 
-        // Immediately emit fallback so users see stories while network loads
-        try {
-            val fallback = fallbackDataSource.loadFallbackStories().map { StoryMappers.fromFallback(it) }
-            Log.d("GlobeNews", "REPO: emitting ${fallback.size} fallback stories immediately")
-            if (fallback.isNotEmpty()) {
-                storiesFlow.value = Result.Success(fallback)
-            } else {
+        // Only emit fallback if we don't already have real data
+        val current = storiesFlow.value
+        val hasRealData = current is Result.Success && current.data.isNotEmpty()
+        if (!hasRealData) {
+            try {
+                val fallback = fallbackDataSource.loadFallbackStories().map { StoryMappers.fromFallback(it) }
+                Log.d(TAG, "REPO: emitting ${fallback.size} fallback stories (no existing data)")
+                if (fallback.isNotEmpty()) {
+                    storiesFlow.value = Result.Success(fallback)
+                } else {
+                    storiesFlow.value = Result.Loading
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "REPO: fallback load failed: ${e.message}")
                 storiesFlow.value = Result.Loading
             }
-        } catch (e: Exception) {
-            Log.e("GlobeNews", "REPO: fallback load failed: ${e.message}")
-            storiesFlow.value = Result.Loading
+        } else {
+            Log.d(TAG, "REPO: skipping fallback, already have ${(current as Result.Success).data.size} stories")
         }
 
         // Now try to fetch fresh data from network sources
@@ -129,16 +139,10 @@ class NewsRepositoryImpl @Inject constructor(
                     Log.d("GlobeNews", "REPO: GDELT mapped to $gdeltCount stories")
                     stories.addAll(gdeltStories)
 
-                    // Managed RSS feeds (297 bundled + user custom)
-                    Log.d("GlobeNews", "REPO: fetching managed RSS feeds...")
-                    try {
-                        val rssItems = rssDataSource.fetchAllManagedFeeds()
-                        rssCount = rssItems.size
-                        Log.d("GlobeNews", "REPO: managed RSS returned $rssCount items")
-                        stories.addAll(rssItems.map { StoryMappers.fromRss(it) })
-                    } catch (e: Exception) {
-                        Log.e("GlobeNews", "REPO: managed RSS fetch failed: ${e.message}")
-                    }
+                    // Managed RSS feeds (297 bundled + user custom) — cached
+                    val rssStories = getCachedRssStories()
+                    rssCount = rssStories.size
+                    stories.addAll(rssStories)
 
                     // Optional sources
                     if (newsApiDataSource.isAvailable) {
@@ -187,25 +191,21 @@ class NewsRepositoryImpl @Inject constructor(
                 Log.d("GlobeNews", "REPO: GDELT continental returned ${gdeltResults.size} articles, mapped to $gdeltCount stories")
                 stories.addAll(gdeltStories)
 
-                // Managed RSS feeds
-                try {
-                    val rssItems = rssDataSource.fetchAllManagedFeeds()
-                    rssCount = rssItems.size
-                    Log.d("GlobeNews", "REPO: managed RSS returned $rssCount items")
-                    stories.addAll(rssItems.map { StoryMappers.fromRss(it) })
-                } catch (e: Exception) {
-                    Log.e("GlobeNews", "REPO: managed RSS fetch failed: ${e.message}")
-                }
+                // Managed RSS feeds — cached
+                val rssStories = getCachedRssStories()
+                rssCount = rssStories.size
+                stories.addAll(rssStories)
 
                 val totalDeduped = deduplicateStories(stories).size
-                Log.d("GlobeNews", "=== COVERAGE: GDELT=$gdeltCount, GoogleRSS=0, RSS=$rssCount, Total=$totalDeduped ===")
+                Log.d(TAG, "=== COVERAGE: GDELT=$gdeltCount, GoogleRSS=0, RSS=$rssCount, Total=$totalDeduped ===")
                 logBrokenFeeds()
             } else {
-                Log.d("GlobeNews", "REPO: LOCAL view path")
+                Log.d(TAG, "REPO: LOCAL view path")
                 var gdeltCount = 0
                 var googleCount = 0
+                var rssCount = 0
 
-                // City/region view — single query + Google News local
+                // City/region view — single query + Google News local + cached RSS
                 // Approximate visible radius from zoom level
                 // zoom 8 ~ 500km, zoom 10 ~ 150km, zoom 12 ~ 40km
                 val radiusKm = (40000.0 / Math.pow(2.0, view.zoom)).toInt().coerceIn(50, 2000)
@@ -227,16 +227,21 @@ class NewsRepositoryImpl @Inject constructor(
                 try {
                     val localNews = googleNewsDataSource.fetchLocal(view.latitude, view.longitude)
                     googleCount = localNews.size
-                    Log.d("GlobeNews", "REPO: Google News local returned $googleCount items")
+                    Log.d(TAG, "REPO: Google News local returned $googleCount items")
                     stories.addAll(localNews.map {
                         StoryMappers.fromGoogleNews(it, view.latitude, view.longitude, null)
                     })
                 } catch (e: Exception) {
-                    Log.e("GlobeNews", "REPO: Google News fetch failed: ${e.message}")
+                    Log.e(TAG, "REPO: Google News fetch failed: ${e.message}")
                 }
 
+                // Managed RSS feeds — cached (adds global context to local view)
+                val rssStories = getCachedRssStories()
+                rssCount = rssStories.size
+                stories.addAll(rssStories)
+
                 val totalDeduped = deduplicateStories(stories).size
-                Log.d("GlobeNews", "=== COVERAGE: GDELT=$gdeltCount, GoogleRSS=$googleCount, RSS=0, Total=$totalDeduped ===")
+                Log.d(TAG, "=== COVERAGE: GDELT=$gdeltCount, GoogleRSS=$googleCount, RSS=$rssCount, Total=$totalDeduped ===")
                 logBrokenFeeds()
             }
 
@@ -290,6 +295,29 @@ class NewsRepositoryImpl @Inject constructor(
                 is Result.Success -> result.data.filter { it.isBookmarked }
                 else -> emptyList()
             }
+        }
+    }
+
+    /** Get RSS stories from cache or fetch fresh if stale */
+    private suspend fun getCachedRssStories(): List<NewsStory> {
+        val cacheValid = Duration.between(rssCacheTime, Instant.now()).toMinutes() < Constants.RSS_REFRESH_MINUTES
+            && rssCache.isNotEmpty()
+
+        if (cacheValid) {
+            Log.d(TAG, "REPO: using cached RSS (${rssCache.size} stories, age=${Duration.between(rssCacheTime, Instant.now()).toMinutes()}m)")
+            return rssCache
+        }
+
+        return try {
+            val rssItems = rssDataSource.fetchAllManagedFeeds()
+            val rssStories = rssItems.map { StoryMappers.fromRss(it) }
+            Log.d(TAG, "REPO: fresh RSS fetch returned ${rssStories.size} stories")
+            rssCache = rssStories
+            rssCacheTime = Instant.now()
+            rssStories
+        } catch (e: Exception) {
+            Log.e(TAG, "REPO: managed RSS fetch failed: ${e.message}")
+            rssCache // Return stale cache if available
         }
     }
 
