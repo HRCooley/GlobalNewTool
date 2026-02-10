@@ -6,14 +6,13 @@ import com.globenews.core.common.Result
 import com.globenews.core.common.normalizeUrl
 import com.globenews.core.common.titleWordOverlap
 import com.globenews.data.mapper.StoryMappers
-import com.globenews.data.source.local.CustomFeedDao
 import com.globenews.data.source.local.FallbackDataSource
+import com.globenews.data.source.local.ManagedFeedDao
 import com.globenews.data.source.remote.gdelt.GdeltDataSource
 import com.globenews.data.source.remote.gnews.GNewsDataSource
 import com.globenews.data.source.remote.googlenews.GoogleNewsDataSource
 import com.globenews.data.source.remote.newsapi.NewsApiDataSource
 import com.globenews.data.source.remote.rss.RssDataSource
-import com.globenews.data.source.remote.rss.RssFeedConfig
 import com.globenews.domain.model.GLOBAL_GRID
 import com.globenews.domain.model.GlobeView
 import com.globenews.domain.model.NewsCategory
@@ -36,7 +35,7 @@ class NewsRepositoryImpl @Inject constructor(
     private val newsApiDataSource: NewsApiDataSource,
     private val gNewsDataSource: GNewsDataSource,
     private val fallbackDataSource: FallbackDataSource,
-    private val customFeedDao: CustomFeedDao
+    private val managedFeedDao: ManagedFeedDao
 ) : NewsRepository {
 
     companion object {
@@ -115,7 +114,6 @@ class NewsRepositoryImpl @Inject constructor(
                 } else {
                     var gdeltCount = 0
                     var rssCount = 0
-                    var customCount = 0
                     var googleCount = 0
 
                     Log.d("GlobeNews", "REPO: fetching GDELT for ${GLOBAL_GRID.size} global regions...")
@@ -131,21 +129,16 @@ class NewsRepositoryImpl @Inject constructor(
                     Log.d("GlobeNews", "REPO: GDELT mapped to $gdeltCount stories")
                     stories.addAll(gdeltStories)
 
-                    // Also fetch RSS (bundled + custom)
-                    Log.d("GlobeNews", "REPO: fetching RSS feeds...")
+                    // Managed RSS feeds (297 bundled + user custom)
+                    Log.d("GlobeNews", "REPO: fetching managed RSS feeds...")
                     try {
-                        val rssItems = rssDataSource.fetchAllFeeds()
+                        val rssItems = rssDataSource.fetchAllManagedFeeds()
                         rssCount = rssItems.size
-                        Log.d("GlobeNews", "REPO: RSS returned $rssCount items")
+                        Log.d("GlobeNews", "REPO: managed RSS returned $rssCount items")
                         stories.addAll(rssItems.map { StoryMappers.fromRss(it) })
                     } catch (e: Exception) {
-                        Log.e("GlobeNews", "REPO: RSS fetch failed: ${e.message}")
+                        Log.e("GlobeNews", "REPO: managed RSS fetch failed: ${e.message}")
                     }
-
-                    // Custom RSS feeds from user
-                    val customStories = fetchCustomFeeds()
-                    customCount = customStories.size
-                    stories.addAll(customStories)
 
                     // Optional sources
                     if (newsApiDataSource.isAvailable) {
@@ -173,13 +166,13 @@ class NewsRepositoryImpl @Inject constructor(
                     globalGridCacheCategory = category
 
                     val totalDeduped = deduplicateStories(stories).size
-                    Log.d("GlobeNews", "=== COVERAGE: GDELT=$gdeltCount, GoogleRSS=$googleCount, RSS=$rssCount, Custom=$customCount, Total=$totalDeduped ===")
+                    Log.d("GlobeNews", "=== COVERAGE: GDELT=$gdeltCount, GoogleRSS=$googleCount, RSS=$rssCount, Total=$totalDeduped ===")
+                    logBrokenFeeds()
                 }
             } else if (view.zoom < Constants.ZOOM_LOCAL_THRESHOLD) {
                 Log.d("GlobeNews", "REPO: CONTINENTAL view path")
                 var gdeltCount = 0
                 var rssCount = 0
-                var customCount = 0
 
                 // Continental view — sub-queries
                 val subRegions = getSubRegions(view)
@@ -194,22 +187,19 @@ class NewsRepositoryImpl @Inject constructor(
                 Log.d("GlobeNews", "REPO: GDELT continental returned ${gdeltResults.size} articles, mapped to $gdeltCount stories")
                 stories.addAll(gdeltStories)
 
+                // Managed RSS feeds
                 try {
-                    val rssItems = rssDataSource.fetchAllFeeds()
+                    val rssItems = rssDataSource.fetchAllManagedFeeds()
                     rssCount = rssItems.size
-                    Log.d("GlobeNews", "REPO: RSS returned $rssCount items")
+                    Log.d("GlobeNews", "REPO: managed RSS returned $rssCount items")
                     stories.addAll(rssItems.map { StoryMappers.fromRss(it) })
                 } catch (e: Exception) {
-                    Log.e("GlobeNews", "REPO: RSS fetch failed: ${e.message}")
+                    Log.e("GlobeNews", "REPO: managed RSS fetch failed: ${e.message}")
                 }
 
-                // Custom RSS feeds from user
-                val customStories = fetchCustomFeeds()
-                customCount = customStories.size
-                stories.addAll(customStories)
-
                 val totalDeduped = deduplicateStories(stories).size
-                Log.d("GlobeNews", "=== COVERAGE: GDELT=$gdeltCount, GoogleRSS=0, RSS=$rssCount, Custom=$customCount, Total=$totalDeduped ===")
+                Log.d("GlobeNews", "=== COVERAGE: GDELT=$gdeltCount, GoogleRSS=0, RSS=$rssCount, Total=$totalDeduped ===")
+                logBrokenFeeds()
             } else {
                 Log.d("GlobeNews", "REPO: LOCAL view path")
                 var gdeltCount = 0
@@ -246,7 +236,8 @@ class NewsRepositoryImpl @Inject constructor(
                 }
 
                 val totalDeduped = deduplicateStories(stories).size
-                Log.d("GlobeNews", "=== COVERAGE: GDELT=$gdeltCount, GoogleRSS=$googleCount, RSS=0, Custom=0, Total=$totalDeduped ===")
+                Log.d("GlobeNews", "=== COVERAGE: GDELT=$gdeltCount, GoogleRSS=$googleCount, RSS=0, Total=$totalDeduped ===")
+                logBrokenFeeds()
             }
 
             // Deduplicate
@@ -302,28 +293,18 @@ class NewsRepositoryImpl @Inject constructor(
         }
     }
 
-    private suspend fun fetchCustomFeeds(): List<NewsStory> {
-        return try {
-            val customFeeds = customFeedDao.getEnabledFeeds()
-            if (customFeeds.isEmpty()) return emptyList()
-            Log.d("GlobeNews", "REPO: fetching ${customFeeds.size} custom RSS feeds...")
-            val configs = customFeeds.map { feed ->
-                RssFeedConfig(
-                    name = feed.name,
-                    url = feed.url,
-                    country = "XX",
-                    language = "en",
-                    lat = feed.latitude,
-                    lon = feed.longitude,
-                    scope = "LOCAL"
-                )
+    /** Log broken feeds at WARN level after each fetch cycle */
+    private suspend fun logBrokenFeeds() {
+        try {
+            val broken = managedFeedDao.getBrokenFeeds()
+            if (broken.isNotEmpty()) {
+                Log.w("GlobeNews", "=== BROKEN FEEDS (${broken.size}) ===")
+                broken.forEach {
+                    Log.w("GlobeNews", "  ${it.name}: ${it.lastError} (${it.consecutiveFailures} failures)")
+                }
             }
-            val items = rssDataSource.fetchFeeds(configs)
-            Log.d("GlobeNews", "REPO: custom RSS returned ${items.size} items")
-            items.map { StoryMappers.fromRss(it) }
         } catch (e: Exception) {
-            Log.e("GlobeNews", "REPO: custom RSS fetch failed: ${e.message}")
-            emptyList()
+            Log.e("GlobeNews", "REPO: failed to query broken feeds: ${e.message}")
         }
     }
 

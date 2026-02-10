@@ -2,6 +2,8 @@ package com.globenews.data.source.remote.rss
 
 import android.content.Context
 import android.util.Log
+import com.globenews.data.source.local.ManagedFeed
+import com.globenews.data.source.local.ManagedFeedDao
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -9,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -17,6 +20,8 @@ import java.io.StringReader
 import java.time.Instant
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.util.Collections
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import javax.xml.parsers.DocumentBuilderFactory
@@ -25,7 +30,8 @@ import javax.xml.parsers.DocumentBuilderFactory
 class RssDataSource @Inject constructor(
     @ApplicationContext private val context: Context,
     private val client: OkHttpClient,
-    private val moshi: Moshi
+    private val moshi: Moshi,
+    private val managedFeedDao: ManagedFeedDao
 ) {
     companion object {
         private const val TAG = "RssDataSource"
@@ -40,6 +46,14 @@ class RssDataSource @Inject constructor(
     )
 
     private var feedConfigs: List<RssFeedConfig>? = null
+
+    // Dedicated client with 10s timeout for RSS feeds
+    private val rssClient: OkHttpClient by lazy {
+        client.newBuilder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .build()
+    }
 
     private fun loadFeedConfigs(): List<RssFeedConfig> {
         feedConfigs?.let { return it }
@@ -75,6 +89,67 @@ class RssDataSource @Inject constructor(
         results.awaitAll().flatten()
     }
 
+    /**
+     * Fetch all enabled managed feeds from Room in batches of 10 with 200ms delay.
+     * Records success/failure per feed for health tracking.
+     * Skips feeds with 10+ consecutive failures.
+     */
+    suspend fun fetchAllManagedFeeds(): List<RssItem> {
+        val feeds = managedFeedDao.getEnabledFeeds().filter { it.consecutiveFailures < 10 }
+        val brokenCount = managedFeedDao.getBrokenCount()
+        Log.d("GlobeNews", "RSS: fetching ${feeds.size} enabled managed feeds ($brokenCount broken)")
+
+        val allItems = Collections.synchronizedList(mutableListOf<RssItem>())
+
+        feeds.chunked(10).forEachIndexed { batchIdx, batch ->
+            coroutineScope {
+                batch.map { feed ->
+                    async {
+                        try {
+                            val items = fetchManagedFeed(feed)
+                            managedFeedDao.recordSuccess(feed.id, System.currentTimeMillis())
+                            allItems.addAll(items)
+                        } catch (e: Exception) {
+                            managedFeedDao.recordFailure(
+                                feed.id,
+                                System.currentTimeMillis(),
+                                e.message ?: "Unknown error"
+                            )
+                            Log.w("GlobeNews", "RSS FAIL: ${feed.name} — ${e.message}")
+                        }
+                    }
+                }.awaitAll()
+            }
+            if (batchIdx < feeds.chunked(10).size - 1) {
+                delay(200)
+            }
+        }
+
+        Log.d("GlobeNews", "RSS: ${allItems.size} items from ${feeds.size} managed feeds")
+        return allItems
+    }
+
+    private suspend fun fetchManagedFeed(feed: ManagedFeed): List<RssItem> = withContext(Dispatchers.IO) {
+        val config = RssFeedConfig(
+            name = feed.name,
+            url = feed.url,
+            country = feed.country,
+            language = feed.language,
+            lat = feed.latitude,
+            lon = feed.longitude,
+            scope = feed.scope
+        )
+
+        val request = Request.Builder()
+            .url(feed.url)
+            .header("User-Agent", "GlobeNews/3.2")
+            .build()
+
+        val response = rssClient.newCall(request).execute()
+        val body = response.body?.string() ?: return@withContext emptyList()
+        parseRss(body, config)
+    }
+
     private suspend fun fetchFeed(config: RssFeedConfig): List<RssItem> = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(config.url)
@@ -93,7 +168,12 @@ class RssDataSource @Inject constructor(
             val builder = factory.newDocumentBuilder()
             val doc = builder.parse(InputSource(StringReader(xml)))
 
-            val items = doc.getElementsByTagName("item")
+            // Try <item> first (RSS), then <entry> (Atom)
+            var items = doc.getElementsByTagName("item")
+            val isAtom = items.length == 0
+            if (isAtom) {
+                items = doc.getElementsByTagName("entry")
+            }
             val results = mutableListOf<RssItem>()
 
             for (i in 0 until minOf(items.length, 30)) {
@@ -108,9 +188,21 @@ class RssDataSource @Inject constructor(
                     val child = children.item(j)
                     when (child.nodeName) {
                         "title" -> title = child.textContent ?: ""
-                        "link" -> link = child.textContent ?: ""
+                        "link" -> {
+                            if (isAtom) {
+                                // Atom: <link href="..."/>
+                                val href = child.attributes?.getNamedItem("href")?.nodeValue
+                                if (!href.isNullOrBlank()) link = href
+                                else if (link.isBlank()) link = child.textContent ?: ""
+                            } else {
+                                link = child.textContent ?: ""
+                            }
+                        }
                         "pubDate" -> pubDate = child.textContent
-                        "description" -> description = child.textContent
+                        "published" -> if (pubDate == null) pubDate = child.textContent
+                        "updated" -> if (pubDate == null) pubDate = child.textContent
+                        "description", "summary", "content" ->
+                            if (description == null) description = child.textContent
                     }
                 }
 
@@ -137,7 +229,12 @@ class RssDataSource @Inject constructor(
         return try {
             ZonedDateTime.parse(dateStr.trim(), DateTimeFormatter.RFC_1123_DATE_TIME).toInstant()
         } catch (e: Exception) {
-            null
+            try {
+                // Try ISO-8601 for Atom feeds
+                Instant.parse(dateStr.trim())
+            } catch (e2: Exception) {
+                null
+            }
         }
     }
 }
