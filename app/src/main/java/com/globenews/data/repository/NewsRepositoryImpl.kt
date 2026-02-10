@@ -6,12 +6,14 @@ import com.globenews.core.common.Result
 import com.globenews.core.common.normalizeUrl
 import com.globenews.core.common.titleWordOverlap
 import com.globenews.data.mapper.StoryMappers
+import com.globenews.data.source.local.CustomFeedDao
 import com.globenews.data.source.local.FallbackDataSource
 import com.globenews.data.source.remote.gdelt.GdeltDataSource
 import com.globenews.data.source.remote.gnews.GNewsDataSource
 import com.globenews.data.source.remote.googlenews.GoogleNewsDataSource
 import com.globenews.data.source.remote.newsapi.NewsApiDataSource
 import com.globenews.data.source.remote.rss.RssDataSource
+import com.globenews.data.source.remote.rss.RssFeedConfig
 import com.globenews.domain.model.GLOBAL_GRID
 import com.globenews.domain.model.GlobeView
 import com.globenews.domain.model.NewsCategory
@@ -33,7 +35,8 @@ class NewsRepositoryImpl @Inject constructor(
     private val rssDataSource: RssDataSource,
     private val newsApiDataSource: NewsApiDataSource,
     private val gNewsDataSource: GNewsDataSource,
-    private val fallbackDataSource: FallbackDataSource
+    private val fallbackDataSource: FallbackDataSource,
+    private val customFeedDao: CustomFeedDao
 ) : NewsRepository {
 
     companion object {
@@ -122,7 +125,7 @@ class NewsRepositoryImpl @Inject constructor(
                     Log.d("GlobeNews", "REPO: GDELT mapped to ${gdeltStories.size} stories")
                     stories.addAll(gdeltStories)
 
-                    // Also fetch RSS
+                    // Also fetch RSS (bundled + custom)
                     Log.d("GlobeNews", "REPO: fetching RSS feeds...")
                     try {
                         val rssItems = rssDataSource.fetchAllFeeds()
@@ -131,6 +134,9 @@ class NewsRepositoryImpl @Inject constructor(
                     } catch (e: Exception) {
                         Log.e("GlobeNews", "REPO: RSS fetch failed: ${e.message}")
                     }
+
+                    // Custom RSS feeds from user
+                    stories.addAll(fetchCustomFeeds())
 
                     // Optional sources
                     if (newsApiDataSource.isAvailable) {
@@ -177,6 +183,9 @@ class NewsRepositoryImpl @Inject constructor(
                 } catch (e: Exception) {
                     Log.e("GlobeNews", "REPO: RSS fetch failed: ${e.message}")
                 }
+
+                // Custom RSS feeds from user
+                stories.addAll(fetchCustomFeeds())
             } else {
                 Log.d("GlobeNews", "REPO: LOCAL view path")
                 // City/region view — single query + Google News local
@@ -257,6 +266,31 @@ class NewsRepositoryImpl @Inject constructor(
                 is Result.Success -> result.data.filter { it.isBookmarked }
                 else -> emptyList()
             }
+        }
+    }
+
+    private suspend fun fetchCustomFeeds(): List<NewsStory> {
+        return try {
+            val customFeeds = customFeedDao.getEnabledFeeds()
+            if (customFeeds.isEmpty()) return emptyList()
+            Log.d("GlobeNews", "REPO: fetching ${customFeeds.size} custom RSS feeds...")
+            val configs = customFeeds.map { feed ->
+                RssFeedConfig(
+                    name = feed.name,
+                    url = feed.url,
+                    country = "XX",
+                    language = "en",
+                    lat = feed.latitude,
+                    lon = feed.longitude,
+                    scope = "LOCAL"
+                )
+            }
+            val items = rssDataSource.fetchFeeds(configs)
+            Log.d("GlobeNews", "REPO: custom RSS returned ${items.size} items")
+            items.map { StoryMappers.fromRss(it) }
+        } catch (e: Exception) {
+            Log.e("GlobeNews", "REPO: custom RSS fetch failed: ${e.message}")
+            emptyList()
         }
     }
 
