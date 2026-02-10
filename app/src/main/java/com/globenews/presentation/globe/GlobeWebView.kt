@@ -48,7 +48,7 @@ fun GlobeWebView(
             }
 
             setBackgroundColor(android.graphics.Color.BLACK)
-            loadUrl("file:///android_asset/globe.html")
+            loadUrl("file:///android_asset/map.html")
         }
     }
 
@@ -77,8 +77,8 @@ fun WebView.setGlobeBaseLayer(layer: String) {
     evaluateJavascript("setBaseLayer('$layer')", null)
 }
 
-fun WebView.flyToLocation(lat: Double, lon: Double, altitudeKm: Double) {
-    evaluateJavascript("flyTo($lat, $lon, $altitudeKm)", null)
+fun WebView.flyToLocation(lat: Double, lon: Double, zoom: Double) {
+    evaluateJavascript("flyTo($lat, $lon, $zoom)", null)
 }
 
 fun WebView.highlightStoryMarker(id: String) {

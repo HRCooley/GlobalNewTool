@@ -41,7 +41,7 @@ class GlobeBridge(private val moshi: Moshi) {
             val view = GlobeView(
                 latitude = dto.lat,
                 longitude = dto.lon,
-                altitude = dto.altitude,
+                zoom = dto.zoom,
                 bounds = dto.bounds?.let {
                     ViewBounds(
                         north = it.north,
@@ -59,7 +59,7 @@ class GlobeBridge(private val moshi: Moshi) {
 
     @JavascriptInterface
     fun onReady() {
-        Log.d(TAG, "Globe is ready")
+        Log.d(TAG, "Map is ready")
         _isReady.tryEmit(true)
     }
 }
@@ -68,7 +68,7 @@ class GlobeBridge(private val moshi: Moshi) {
 data class CameraViewDto(
     @Json(name = "lat") val lat: Double,
     @Json(name = "lon") val lon: Double,
-    @Json(name = "altitude") val altitude: Double,
+    @Json(name = "zoom") val zoom: Double,
     @Json(name = "bounds") val bounds: BoundsDto?
 )
 

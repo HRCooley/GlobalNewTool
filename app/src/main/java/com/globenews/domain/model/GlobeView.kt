@@ -3,7 +3,7 @@ package com.globenews.domain.model
 data class GlobeView(
     val latitude: Double,
     val longitude: Double,
-    val altitude: Double,
+    val zoom: Double,
     val bounds: ViewBounds?
 )
 
