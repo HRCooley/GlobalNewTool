@@ -1,5 +1,6 @@
 package com.globenews.presentation.globe
 
+import android.util.Log
 import android.webkit.WebView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -79,8 +80,10 @@ fun GlobeScreen(
     // When map is ready, push current markers
     val isMapReady by bridge.isReady.collectAsState()
     LaunchedEffect(isMapReady, webView) {
+        Log.d("GlobeNews", "SCREEN: LaunchedEffect(isMapReady=$isMapReady, webView=${webView != null})")
         if (isMapReady && webView != null) {
             val stories = viewModel.uiState.value.stories
+            Log.d("GlobeNews", "SCREEN: map ready, pushing ${stories.size} stories to webview")
             if (stories.isNotEmpty()) {
                 webView?.updateMarkers(stories)
             }
@@ -89,6 +92,7 @@ fun GlobeScreen(
 
     // Update markers when stories change
     LaunchedEffect(uiState.stories) {
+        Log.d("GlobeNews", "SCREEN: stories changed, count=${uiState.stories.size}, isMapReady=$isMapReady")
         if (isMapReady) {
             webView?.updateMarkers(uiState.stories)
         }

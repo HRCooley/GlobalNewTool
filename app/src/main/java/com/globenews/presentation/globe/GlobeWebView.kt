@@ -1,6 +1,7 @@
 package com.globenews.presentation.globe
 
 import android.annotation.SuppressLint
+import android.util.Log
 import android.view.ViewGroup
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -46,10 +47,12 @@ fun GlobeWebView(
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
+                    Log.d("GlobeNews", "WEBVIEW: onPageFinished url=$url")
                 }
             }
 
             setBackgroundColor(android.graphics.Color.BLACK)
+            Log.d("GlobeNews", "WEBVIEW: loading map.html")
             loadUrl("file:///android_asset/map.html")
         }
     }
@@ -68,10 +71,14 @@ fun GlobeWebView(
 }
 
 fun WebView.updateMarkers(stories: List<NewsStory>) {
+    Log.d("GlobeNews", "WEBVIEW: updateMarkers called with ${stories.size} stories")
     // Clear existing markers before adding new ones
     evaluateJavascript("clearMarkers()", null)
 
-    if (stories.isEmpty()) return
+    if (stories.isEmpty()) {
+        Log.d("GlobeNews", "WEBVIEW: stories list is empty, returning after clearMarkers")
+        return
+    }
 
     val now = Instant.now()
     val markersJson = stories.map { story ->
@@ -83,17 +90,21 @@ fun WebView.updateMarkers(stories: List<NewsStory>) {
         """{"id":"${story.id.replace("\"", "")}","lat":${story.location.latitude},"lon":${story.location.longitude},"category":"${story.category.name}","title":"$safeTitle","sourceName":"$safeName","hoursAgo":$hoursAgo}"""
     }.joinToString(",", "[", "]")
 
+    Log.d("GlobeNews", "WEBVIEW: calling addMarkers with JSON length=${markersJson.length}, first 200 chars: ${markersJson.take(200)}")
     evaluateJavascript("addMarkers('${markersJson.replace("'", "\\'")}')", null)
 }
 
 fun WebView.setGlobeBaseLayer(layer: String) {
+    Log.d("GlobeNews", "WEBVIEW: setBaseLayer('$layer')")
     evaluateJavascript("setBaseLayer('$layer')", null)
 }
 
 fun WebView.flyToLocation(lat: Double, lon: Double, zoom: Double) {
+    Log.d("GlobeNews", "WEBVIEW: flyToLocation($lat, $lon, $zoom)")
     evaluateJavascript("flyTo($lat, $lon, $zoom)", null)
 }
 
 fun WebView.highlightStoryMarker(id: String) {
+    Log.d("GlobeNews", "WEBVIEW: highlightMarker('$id')")
     evaluateJavascript("highlightMarker('${id.replace("'", "\\'")}')", null)
 }

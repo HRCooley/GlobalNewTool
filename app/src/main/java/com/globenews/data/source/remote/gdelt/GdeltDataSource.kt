@@ -33,17 +33,19 @@ class GdeltDataSource @Inject constructor(
                 async {
                     try {
                         val query = buildQuery(region, category)
-                        Log.d(TAG, "GDELT query: ${Constants.GDELT_BASE_URL}doc?query=$query&mode=artlist&maxrecords=$maxRecords&timespan=$timespan&format=json")
+                        Log.d("GlobeNews", "GDELT: query URL = ${Constants.GDELT_BASE_URL}doc?query=$query&mode=artlist&maxrecords=$maxRecords&timespan=$timespan&format=json")
                         val response = api.search(
                             query = query,
                             maxRecords = maxRecords,
                             timespan = timespan
                         )
-                        response.articles?.map { article ->
+                        val articles = response.articles ?: emptyList()
+                        Log.d("GlobeNews", "GDELT: region ${region.name} returned ${articles.size} articles")
+                        articles.map { article ->
                             GdeltArticleWithLocation(article, region)
-                        } ?: emptyList()
+                        }
                     } catch (e: Exception) {
-                        Log.w(TAG, "Failed to fetch GDELT for ${region.name}: ${e.message}")
+                        Log.e("GlobeNews", "GDELT: ERROR for ${region.name}: ${e.javaClass.simpleName}: ${e.message}")
                         emptyList()
                     }
                 }

@@ -29,15 +29,19 @@ class GlobeBridge(private val moshi: Moshi) {
 
     @JavascriptInterface
     fun onMarkerTap(storyId: String) {
-        Log.d(TAG, "Marker tapped: $storyId")
+        Log.d("GlobeNews", "BRIDGE: onMarkerTap storyId=$storyId")
         _markerTaps.tryEmit(storyId)
     }
 
     @JavascriptInterface
     fun onCameraMove(viewJson: String) {
+        Log.d("GlobeNews", "BRIDGE: onCameraMove raw JSON length=${viewJson.length}")
         try {
             val adapter = moshi.adapter(CameraViewDto::class.java)
-            val dto = adapter.fromJson(viewJson) ?: return
+            val dto = adapter.fromJson(viewJson) ?: run {
+                Log.w("GlobeNews", "BRIDGE: onCameraMove parsed to null")
+                return
+            }
             val view = GlobeView(
                 latitude = dto.lat,
                 longitude = dto.lon,
@@ -51,15 +55,16 @@ class GlobeBridge(private val moshi: Moshi) {
                     )
                 }
             )
+            Log.d("GlobeNews", "BRIDGE: onCameraMove lat=${view.latitude}, lon=${view.longitude}, zoom=${view.zoom}")
             _cameraMoves.tryEmit(view)
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to parse camera view: ${e.message}")
+            Log.e("GlobeNews", "BRIDGE: onCameraMove PARSE ERROR: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 
     @JavascriptInterface
     fun onReady() {
-        Log.d(TAG, "Map is ready")
+        Log.d("GlobeNews", "BRIDGE: onReady called - map is ready")
         _isReady.tryEmit(true)
     }
 }
