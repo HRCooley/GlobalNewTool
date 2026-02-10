@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import com.globenews.data.source.local.AppDatabase
 import com.globenews.data.source.local.CustomFeedDao
+import com.globenews.data.source.local.ManagedFeedDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -28,5 +29,10 @@ object DatabaseModule {
     @Provides
     fun provideCustomFeedDao(db: AppDatabase): CustomFeedDao {
         return db.customFeedDao()
+    }
+
+    @Provides
+    fun provideManagedFeedDao(db: AppDatabase): ManagedFeedDao {
+        return db.managedFeedDao()
     }
 }
