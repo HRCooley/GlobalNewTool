@@ -150,7 +150,7 @@ fun GlobeScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Refresh
-            IconButton(onClick = { viewModel.loadStories() }) {
+            IconButton(onClick = { viewModel.loadStories(force = true) }) {
                 Icon(
                     Icons.Filled.Refresh,
                     contentDescription = "Refresh",

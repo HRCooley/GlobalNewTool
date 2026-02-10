@@ -94,7 +94,13 @@ class GlobeViewModel @Inject constructor(
         }
     }
 
-    fun loadStories() {
+    fun loadStories(force: Boolean = false) {
+        // Don't cancel an active fetch unless forced (manual refresh)
+        // The initial fetch populates caches that subsequent fetches depend on
+        if (!force && fetchJob?.isActive == true) {
+            Log.d("GlobeNews", "VIEWMODEL: fetch already in progress, skipping")
+            return
+        }
         fetchJob?.cancel()
         fetchJob = viewModelScope.launch {
             val state = _uiState.value
