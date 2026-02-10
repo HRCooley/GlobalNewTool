@@ -47,6 +47,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val customFeeds by viewModel.customFeeds.collectAsState()
+    val diagnostics by viewModel.diagnostics.collectAsState()
 
     Scaffold(
         topBar = {
@@ -74,6 +75,28 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Network Diagnostics Section
+            Text("Network Diagnostics", style = MaterialTheme.typography.titleMedium)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    DiagnosticRow("Network Test", diagnostics.networkTest)
+                    DiagnosticRow("GDELT", diagnostics.gdeltStatus)
+                    DiagnosticRow("RSS", diagnostics.rssStatus)
+                    DiagnosticRow("Live Total", diagnostics.liveTotal)
+                    DiagnosticRow("Pipeline", diagnostics.pipelineSummary)
+                }
+            }
+
+            HorizontalDivider()
+
             // Custom RSS Feeds Section
             Text("Custom RSS Feeds", style = MaterialTheme.typography.titleMedium)
             Text(
@@ -222,6 +245,26 @@ private fun CustomFeedForm(onAdd: (String, String, Double, Double) -> Unit) {
             Icon(Icons.Filled.Add, contentDescription = null)
             Text(" Add Feed")
         }
+    }
+}
+
+@Composable
+private fun DiagnosticRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(0.35f)
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(0.65f)
+        )
     }
 }
 
