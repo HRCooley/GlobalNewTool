@@ -58,6 +58,10 @@ class RssDataSource @Inject constructor(
 
     suspend fun fetchAllFeeds(): List<RssItem> = coroutineScope {
         val configs = loadFeedConfigs()
+        fetchFeeds(configs)
+    }
+
+    suspend fun fetchFeeds(configs: List<RssFeedConfig>): List<RssItem> = coroutineScope {
         val results = configs.map { config ->
             async {
                 try {
@@ -92,7 +96,7 @@ class RssDataSource @Inject constructor(
             val items = doc.getElementsByTagName("item")
             val results = mutableListOf<RssItem>()
 
-            for (i in 0 until minOf(items.length, 25)) {
+            for (i in 0 until minOf(items.length, 30)) {
                 val node = items.item(i)
                 val children = node.childNodes
                 var title = ""
