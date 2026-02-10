@@ -113,6 +113,11 @@ class NewsRepositoryImpl @Inject constructor(
                     Log.d("GlobeNews", "REPO: using cached global grid (${globalGridCache.size} stories)")
                     stories.addAll(globalGridCache)
                 } else {
+                    var gdeltCount = 0
+                    var rssCount = 0
+                    var customCount = 0
+                    var googleCount = 0
+
                     Log.d("GlobeNews", "REPO: fetching GDELT for ${GLOBAL_GRID.size} global regions...")
                     val gdeltResults = gdeltDataSource.fetchForRegions(
                         regions = GLOBAL_GRID,
@@ -122,21 +127,25 @@ class NewsRepositoryImpl @Inject constructor(
                     )
                     Log.d("GlobeNews", "REPO: GDELT returned ${gdeltResults.size} raw articles")
                     val gdeltStories = gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) }
-                    Log.d("GlobeNews", "REPO: GDELT mapped to ${gdeltStories.size} stories")
+                    gdeltCount = gdeltStories.size
+                    Log.d("GlobeNews", "REPO: GDELT mapped to $gdeltCount stories")
                     stories.addAll(gdeltStories)
 
                     // Also fetch RSS (bundled + custom)
                     Log.d("GlobeNews", "REPO: fetching RSS feeds...")
                     try {
                         val rssItems = rssDataSource.fetchAllFeeds()
-                        Log.d("GlobeNews", "REPO: RSS returned ${rssItems.size} items")
+                        rssCount = rssItems.size
+                        Log.d("GlobeNews", "REPO: RSS returned $rssCount items")
                         stories.addAll(rssItems.map { StoryMappers.fromRss(it) })
                     } catch (e: Exception) {
                         Log.e("GlobeNews", "REPO: RSS fetch failed: ${e.message}")
                     }
 
                     // Custom RSS feeds from user
-                    stories.addAll(fetchCustomFeeds())
+                    val customStories = fetchCustomFeeds()
+                    customCount = customStories.size
+                    stories.addAll(customStories)
 
                     // Optional sources
                     if (newsApiDataSource.isAvailable) {
@@ -162,9 +171,16 @@ class NewsRepositoryImpl @Inject constructor(
                     globalGridCache = stories.toList()
                     globalGridCacheTime = Instant.now()
                     globalGridCacheCategory = category
+
+                    val totalDeduped = deduplicateStories(stories).size
+                    Log.d("GlobeNews", "=== COVERAGE: GDELT=$gdeltCount, GoogleRSS=$googleCount, RSS=$rssCount, Custom=$customCount, Total=$totalDeduped ===")
                 }
             } else if (view.zoom < Constants.ZOOM_LOCAL_THRESHOLD) {
                 Log.d("GlobeNews", "REPO: CONTINENTAL view path")
+                var gdeltCount = 0
+                var rssCount = 0
+                var customCount = 0
+
                 // Continental view — sub-queries
                 val subRegions = getSubRegions(view)
                 val gdeltResults = gdeltDataSource.fetchForRegions(
@@ -173,21 +189,32 @@ class NewsRepositoryImpl @Inject constructor(
                     maxRecords = 100,
                     timespan = "48h"
                 )
-                Log.d("GlobeNews", "REPO: GDELT continental returned ${gdeltResults.size} articles")
-                stories.addAll(gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) })
+                val gdeltStories = gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) }
+                gdeltCount = gdeltStories.size
+                Log.d("GlobeNews", "REPO: GDELT continental returned ${gdeltResults.size} articles, mapped to $gdeltCount stories")
+                stories.addAll(gdeltStories)
 
                 try {
                     val rssItems = rssDataSource.fetchAllFeeds()
-                    Log.d("GlobeNews", "REPO: RSS returned ${rssItems.size} items")
+                    rssCount = rssItems.size
+                    Log.d("GlobeNews", "REPO: RSS returned $rssCount items")
                     stories.addAll(rssItems.map { StoryMappers.fromRss(it) })
                 } catch (e: Exception) {
                     Log.e("GlobeNews", "REPO: RSS fetch failed: ${e.message}")
                 }
 
                 // Custom RSS feeds from user
-                stories.addAll(fetchCustomFeeds())
+                val customStories = fetchCustomFeeds()
+                customCount = customStories.size
+                stories.addAll(customStories)
+
+                val totalDeduped = deduplicateStories(stories).size
+                Log.d("GlobeNews", "=== COVERAGE: GDELT=$gdeltCount, GoogleRSS=0, RSS=$rssCount, Custom=$customCount, Total=$totalDeduped ===")
             } else {
                 Log.d("GlobeNews", "REPO: LOCAL view path")
+                var gdeltCount = 0
+                var googleCount = 0
+
                 // City/region view — single query + Google News local
                 // Approximate visible radius from zoom level
                 // zoom 8 ~ 500km, zoom 10 ~ 150km, zoom 12 ~ 40km
@@ -201,19 +228,25 @@ class NewsRepositoryImpl @Inject constructor(
                     maxRecords = 100,
                     timespan = "7d"
                 )
-                Log.d("GlobeNews", "REPO: GDELT nearby returned ${gdeltResults.size} articles")
-                stories.addAll(gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) })
+                val gdeltStories = gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) }
+                gdeltCount = gdeltStories.size
+                Log.d("GlobeNews", "REPO: GDELT nearby returned ${gdeltResults.size} articles, mapped to $gdeltCount stories")
+                stories.addAll(gdeltStories)
 
                 // Google News local
                 try {
                     val localNews = googleNewsDataSource.fetchLocal(view.latitude, view.longitude)
-                    Log.d("GlobeNews", "REPO: Google News local returned ${localNews.size} items")
+                    googleCount = localNews.size
+                    Log.d("GlobeNews", "REPO: Google News local returned $googleCount items")
                     stories.addAll(localNews.map {
                         StoryMappers.fromGoogleNews(it, view.latitude, view.longitude, null)
                     })
                 } catch (e: Exception) {
                     Log.e("GlobeNews", "REPO: Google News fetch failed: ${e.message}")
                 }
+
+                val totalDeduped = deduplicateStories(stories).size
+                Log.d("GlobeNews", "=== COVERAGE: GDELT=$gdeltCount, GoogleRSS=$googleCount, RSS=0, Custom=0, Total=$totalDeduped ===")
             }
 
             // Deduplicate
