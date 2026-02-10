@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.globenews.domain.model.NewsCategory
+import com.globenews.presentation.feeds.FeedManagementScreen
 import com.globenews.presentation.settings.SettingsScreen
 import com.globenews.presentation.storydetail.StoryDetailSheet
 import com.squareup.moshi.Moshi
@@ -57,9 +58,21 @@ fun GlobeScreen(
     val bridge = remember { GlobeBridge(moshi) }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var showSettings by remember { mutableStateOf(false) }
+    var showFeedManagement by remember { mutableStateOf(false) }
+
+    if (showFeedManagement) {
+        FeedManagementScreen(onBack = { showFeedManagement = false })
+        return
+    }
 
     if (showSettings) {
-        SettingsScreen(onBack = { showSettings = false })
+        SettingsScreen(
+            onBack = { showSettings = false },
+            onManageFeeds = {
+                showSettings = false
+                showFeedManagement = true
+            }
+        )
         return
     }
 

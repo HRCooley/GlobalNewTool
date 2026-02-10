@@ -43,6 +43,7 @@ import com.globenews.data.source.local.CustomFeedEntity
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
+    onManageFeeds: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val customFeeds by viewModel.customFeeds.collectAsState()
@@ -97,6 +98,22 @@ fun SettingsScreen(
 
             HorizontalDivider()
 
+            // Manage Feeds button
+            Text("Feed Management", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "297 bundled RSS feeds with health monitoring. Toggle feeds on/off, add custom feeds, and track broken feeds.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Button(
+                onClick = onManageFeeds,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Manage Feeds")
+            }
+
+            HorizontalDivider()
+
             // API Keys Section
             Text("API Keys", style = MaterialTheme.typography.titleMedium)
             Text(
@@ -130,12 +147,12 @@ fun SettingsScreen(
             Text("Data Sources", style = MaterialTheme.typography.titleMedium)
             Text("GDELT (primary) — no key required", style = MaterialTheme.typography.bodyMedium)
             Text("Google News RSS — no key required", style = MaterialTheme.typography.bodyMedium)
-            Text("20 curated RSS feeds — no key required", style = MaterialTheme.typography.bodyMedium)
+            Text("297 managed RSS feeds — no key required", style = MaterialTheme.typography.bodyMedium)
 
             Spacer(modifier = Modifier.height(24.dp))
 
             Text("About", style = MaterialTheme.typography.titleMedium)
-            Text("GlobeNews v3.1", style = MaterialTheme.typography.bodyMedium)
+            Text("GlobeNews v3.2", style = MaterialTheme.typography.bodyMedium)
             Text(
                 "Real-time global news visualization on an interactive map. " +
                     "News sourced from GDELT, Google News, and curated RSS feeds worldwide.",
