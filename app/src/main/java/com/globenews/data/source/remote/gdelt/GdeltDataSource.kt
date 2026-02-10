@@ -96,6 +96,7 @@ class GdeltDataSource @Inject constructor(
 
     private fun buildQuery(region: QueryRegion, category: NewsCategory): String {
         // GDELT DOC 2.0 uses sourcecountry: with FIPS codes for geographic filtering
+        // No sourcelang filter — get all languages
         val geoClause = if (region.countryCodes.isNotEmpty()) {
             if (region.countryCodes.size == 1) {
                 "sourcecountry:${region.countryCodes.first()}"
@@ -103,7 +104,8 @@ class GdeltDataSource @Inject constructor(
                 region.countryCodes.joinToString(" OR ") { "sourcecountry:$it" }
             }
         } else {
-            "sourcelang:english"
+            // Fallback for regions without country codes — broad search
+            region.name.replace("/", " OR ")
         }
         return if (category == NewsCategory.ALL || category.gdeltThemes.isEmpty()) {
             "($geoClause)"

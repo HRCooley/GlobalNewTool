@@ -81,7 +81,8 @@ class GoogleNewsDataSource @Inject constructor(
             val response = client.newCall(request).execute()
             val body = response.body?.string() ?: return@withContext emptyList()
 
-            val items = parseRss(body)
+            val items = parseRss(body).take(50) // Cap at 50 items
+            Log.d("GlobeNews", "GoogleRSS: ${items.size} for '$placeName'")
             lastPlace = placeName
             cachedItems = items
             cacheTime = Instant.now()
