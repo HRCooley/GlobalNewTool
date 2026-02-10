@@ -26,7 +26,7 @@ data class GlobeUiState(
     val storyCount: Int = 0,
     val selectedCategory: NewsCategory = NewsCategory.ALL,
     val selectedStory: NewsStory? = null,
-    val currentView: GlobeView = GlobeView(20.0, 0.0, 15000.0, null),
+    val currentView: GlobeView = GlobeView(20.0, 0.0, 2.0, null),
     val baseLayer: String = "dark"
 )
 

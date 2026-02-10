@@ -14,12 +14,14 @@ object Constants {
     const val GDELT_BATCH_SIZE = 5
     const val GDELT_BATCH_DELAY_MS = 500L
 
-    const val MAX_MARKERS_HIGH_ALT = 1000
-    const val MAX_MARKERS_MID_ALT = 750
-    const val MAX_MARKERS_LOW_ALT = 500
+    const val MAX_MARKERS_WORLD = 1000
+    const val MAX_MARKERS_REGION = 750
+    const val MAX_MARKERS_LOCAL = 500
 
-    const val HIGH_ALTITUDE_KM = 8000.0
-    const val LOW_ALTITUDE_KM = 1000.0
+    // Zoom thresholds for Leaflet (zoom 2-18)
+    // zoom < 4 = world view, 4-8 = continental, >8 = city/region
+    const val ZOOM_WORLD_THRESHOLD = 4.0
+    const val ZOOM_LOCAL_THRESHOLD = 8.0
 
     const val DEDUP_TITLE_OVERLAP_THRESHOLD = 0.8
     const val DEDUP_TIME_WINDOW_HOURS = 12L

@@ -60,11 +60,11 @@ class NewsRepositoryImpl @Inject constructor(
                     } else {
                         result.data.filter { it.category == category }
                     }
-                    // Apply marker cap based on altitude
+                    // Apply marker cap based on zoom level
                     val cap = when {
-                        view.altitude > Constants.HIGH_ALTITUDE_KM -> Constants.MAX_MARKERS_HIGH_ALT
-                        view.altitude > Constants.LOW_ALTITUDE_KM -> Constants.MAX_MARKERS_MID_ALT
-                        else -> Constants.MAX_MARKERS_LOW_ALT
+                        view.zoom < Constants.ZOOM_WORLD_THRESHOLD -> Constants.MAX_MARKERS_WORLD
+                        view.zoom < Constants.ZOOM_LOCAL_THRESHOLD -> Constants.MAX_MARKERS_REGION
+                        else -> Constants.MAX_MARKERS_LOCAL
                     }
                     val capped = filtered
                         .sortedByDescending { it.publishedAt }
@@ -83,7 +83,7 @@ class NewsRepositoryImpl @Inject constructor(
         try {
             val stories = mutableListOf<NewsStory>()
 
-            if (view.altitude > Constants.HIGH_ALTITUDE_KM) {
+            if (view.zoom < Constants.ZOOM_WORLD_THRESHOLD) {
                 // Global view — use grid
                 val cacheValid = Duration.between(globalGridCacheTime, Instant.now()).toMinutes() < Constants.GLOBAL_CACHE_MINUTES
                     && globalGridCacheCategory == category
@@ -118,7 +118,7 @@ class NewsRepositoryImpl @Inject constructor(
                     globalGridCacheTime = Instant.now()
                     globalGridCacheCategory = category
                 }
-            } else if (view.altitude > Constants.LOW_ALTITUDE_KM) {
+            } else if (view.zoom < Constants.ZOOM_LOCAL_THRESHOLD) {
                 // Continental view — sub-queries
                 val subRegions = getSubRegions(view)
                 val gdeltResults = gdeltDataSource.fetchForRegions(
@@ -133,7 +133,9 @@ class NewsRepositoryImpl @Inject constructor(
                 stories.addAll(rssItems.map { StoryMappers.fromRss(it) })
             } else {
                 // City/region view — single query + Google News local
-                val radiusKm = (view.altitude * 0.5).toInt().coerceIn(50, 2000)
+                // Approximate visible radius from zoom level
+                // zoom 8 ~ 500km, zoom 10 ~ 150km, zoom 12 ~ 40km
+                val radiusKm = (40000.0 / Math.pow(2.0, view.zoom)).toInt().coerceIn(50, 2000)
                 val gdeltResults = gdeltDataSource.fetchNearby(
                     lat = view.latitude,
                     lon = view.longitude,
