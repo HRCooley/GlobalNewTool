@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.globenews.domain.model.NewsCategory
+import com.globenews.presentation.settings.SettingsScreen
 import com.globenews.presentation.storydetail.StoryDetailSheet
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -54,6 +55,12 @@ fun GlobeScreen(
     val moshi = remember { Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build() }
     val bridge = remember { GlobeBridge(moshi) }
     var webView by remember { mutableStateOf<WebView?>(null) }
+    var showSettings by remember { mutableStateOf(false) }
+
+    if (showSettings) {
+        SettingsScreen(onBack = { showSettings = false })
+        return
+    }
 
     // Observe bridge events
     LaunchedEffect(bridge) {
@@ -69,18 +76,33 @@ fun GlobeScreen(
         }
     }
 
+    // When map is ready, push current markers
+    val isMapReady by bridge.isReady.collectAsState()
+    LaunchedEffect(isMapReady, webView) {
+        if (isMapReady && webView != null) {
+            val stories = viewModel.uiState.value.stories
+            if (stories.isNotEmpty()) {
+                webView?.updateMarkers(stories)
+            }
+        }
+    }
+
     // Update markers when stories change
     LaunchedEffect(uiState.stories) {
-        webView?.updateMarkers(uiState.stories)
+        if (isMapReady) {
+            webView?.updateMarkers(uiState.stories)
+        }
     }
 
     // Update base layer
     LaunchedEffect(uiState.baseLayer) {
-        webView?.setGlobeBaseLayer(uiState.baseLayer)
+        if (isMapReady) {
+            webView?.setGlobeBaseLayer(uiState.baseLayer)
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        // Globe WebView
+        // Map WebView
         GlobeWebView(
             modifier = Modifier.fillMaxSize(),
             bridge = bridge,
@@ -135,8 +157,8 @@ fun GlobeScreen(
                 }
             }
 
-            // Settings placeholder
-            IconButton(onClick = { /* TODO: settings */ }) {
+            // Settings
+            IconButton(onClick = { showSettings = true }) {
                 Icon(
                     Icons.Filled.Settings,
                     contentDescription = "Settings",

@@ -13,6 +13,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import com.globenews.domain.model.NewsStory
 import com.squareup.moshi.Moshi
+import java.time.Duration
+import java.time.Instant
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -66,8 +68,19 @@ fun GlobeWebView(
 }
 
 fun WebView.updateMarkers(stories: List<NewsStory>) {
+    // Clear existing markers before adding new ones
+    evaluateJavascript("clearMarkers()", null)
+
+    if (stories.isEmpty()) return
+
+    val now = Instant.now()
     val markersJson = stories.map { story ->
-        """{"id":"${story.id.replace("\"", "\\\"")}","lat":${story.location.latitude},"lon":${story.location.longitude},"category":"${story.category.name}","title":"${story.title.replace("\"", "\\\"").replace("\n", " ").take(80)}","sourceName":"${story.sources.firstOrNull()?.name?.replace("\"", "\\\"") ?: ""}","publishedAt":"${story.publishedAt}"}"""
+        val hoursAgo = try {
+            Duration.between(story.publishedAt, now).toHours()
+        } catch (e: Exception) { 24L }
+        val safeTitle = story.title.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ").replace("\r", "").take(80)
+        val safeName = (story.sources.firstOrNull()?.name ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
+        """{"id":"${story.id.replace("\"", "")}","lat":${story.location.latitude},"lon":${story.location.longitude},"category":"${story.category.name}","title":"$safeTitle","sourceName":"$safeName","hoursAgo":$hoursAgo}"""
     }.joinToString(",", "[", "]")
 
     evaluateJavascript("addMarkers('${markersJson.replace("'", "\\'")}')", null)
