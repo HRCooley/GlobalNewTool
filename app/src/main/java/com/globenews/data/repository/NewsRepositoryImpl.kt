@@ -79,46 +79,71 @@ class NewsRepositoryImpl @Inject constructor(
     }
 
     override suspend fun refreshStories(view: GlobeView, category: NewsCategory) {
+        Log.d("GlobeNews", "REPO: refreshStories called, zoom=${view.zoom}, category=$category")
         storiesFlow.value = Result.Loading
         try {
             val stories = mutableListOf<NewsStory>()
 
             if (view.zoom < Constants.ZOOM_WORLD_THRESHOLD) {
+                Log.d("GlobeNews", "REPO: GLOBAL view path (zoom ${view.zoom} < ${Constants.ZOOM_WORLD_THRESHOLD})")
                 // Global view — use grid
                 val cacheValid = Duration.between(globalGridCacheTime, Instant.now()).toMinutes() < Constants.GLOBAL_CACHE_MINUTES
                     && globalGridCacheCategory == category
                     && globalGridCache.isNotEmpty()
 
                 if (cacheValid) {
+                    Log.d("GlobeNews", "REPO: using cached global grid (${globalGridCache.size} stories)")
                     stories.addAll(globalGridCache)
                 } else {
+                    Log.d("GlobeNews", "REPO: fetching GDELT for ${GLOBAL_GRID.size} global regions...")
                     val gdeltResults = gdeltDataSource.fetchForRegions(
                         regions = GLOBAL_GRID,
                         category = category,
                         maxRecords = 75,
                         timespan = "24h"
                     )
-                    stories.addAll(gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) })
+                    Log.d("GlobeNews", "REPO: GDELT returned ${gdeltResults.size} raw articles")
+                    val gdeltStories = gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) }
+                    Log.d("GlobeNews", "REPO: GDELT mapped to ${gdeltStories.size} stories")
+                    stories.addAll(gdeltStories)
 
                     // Also fetch RSS
-                    val rssItems = rssDataSource.fetchAllFeeds()
-                    stories.addAll(rssItems.map { StoryMappers.fromRss(it) })
+                    Log.d("GlobeNews", "REPO: fetching RSS feeds...")
+                    try {
+                        val rssItems = rssDataSource.fetchAllFeeds()
+                        Log.d("GlobeNews", "REPO: RSS returned ${rssItems.size} items")
+                        stories.addAll(rssItems.map { StoryMappers.fromRss(it) })
+                    } catch (e: Exception) {
+                        Log.e("GlobeNews", "REPO: RSS fetch failed: ${e.message}")
+                    }
 
                     // Optional sources
                     if (newsApiDataSource.isAvailable) {
-                        val newsApiItems = newsApiDataSource.fetchHeadlines()
-                        stories.addAll(newsApiItems.mapNotNull { StoryMappers.fromNewsApi(it) })
+                        try {
+                            val newsApiItems = newsApiDataSource.fetchHeadlines()
+                            Log.d("GlobeNews", "REPO: NewsAPI returned ${newsApiItems.size} items")
+                            stories.addAll(newsApiItems.mapNotNull { StoryMappers.fromNewsApi(it) })
+                        } catch (e: Exception) {
+                            Log.e("GlobeNews", "REPO: NewsAPI failed: ${e.message}")
+                        }
                     }
                     if (gNewsDataSource.isAvailable) {
-                        val gNewsItems = gNewsDataSource.fetchHeadlines()
-                        stories.addAll(gNewsItems.mapNotNull { StoryMappers.fromGNews(it) })
+                        try {
+                            val gNewsItems = gNewsDataSource.fetchHeadlines()
+                            Log.d("GlobeNews", "REPO: GNews returned ${gNewsItems.size} items")
+                            stories.addAll(gNewsItems.mapNotNull { StoryMappers.fromGNews(it) })
+                        } catch (e: Exception) {
+                            Log.e("GlobeNews", "REPO: GNews failed: ${e.message}")
+                        }
                     }
 
+                    Log.d("GlobeNews", "REPO: total stories before dedup: ${stories.size}")
                     globalGridCache = stories.toList()
                     globalGridCacheTime = Instant.now()
                     globalGridCacheCategory = category
                 }
             } else if (view.zoom < Constants.ZOOM_LOCAL_THRESHOLD) {
+                Log.d("GlobeNews", "REPO: CONTINENTAL view path")
                 // Continental view — sub-queries
                 val subRegions = getSubRegions(view)
                 val gdeltResults = gdeltDataSource.fetchForRegions(
@@ -127,15 +152,23 @@ class NewsRepositoryImpl @Inject constructor(
                     maxRecords = 100,
                     timespan = "48h"
                 )
+                Log.d("GlobeNews", "REPO: GDELT continental returned ${gdeltResults.size} articles")
                 stories.addAll(gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) })
 
-                val rssItems = rssDataSource.fetchAllFeeds()
-                stories.addAll(rssItems.map { StoryMappers.fromRss(it) })
+                try {
+                    val rssItems = rssDataSource.fetchAllFeeds()
+                    Log.d("GlobeNews", "REPO: RSS returned ${rssItems.size} items")
+                    stories.addAll(rssItems.map { StoryMappers.fromRss(it) })
+                } catch (e: Exception) {
+                    Log.e("GlobeNews", "REPO: RSS fetch failed: ${e.message}")
+                }
             } else {
+                Log.d("GlobeNews", "REPO: LOCAL view path")
                 // City/region view — single query + Google News local
                 // Approximate visible radius from zoom level
                 // zoom 8 ~ 500km, zoom 10 ~ 150km, zoom 12 ~ 40km
                 val radiusKm = (40000.0 / Math.pow(2.0, view.zoom)).toInt().coerceIn(50, 2000)
+                Log.d("GlobeNews", "REPO: GDELT nearby lat=${view.latitude}, lon=${view.longitude}, radius=${radiusKm}km")
                 val gdeltResults = gdeltDataSource.fetchNearby(
                     lat = view.latitude,
                     lon = view.longitude,
@@ -144,34 +177,50 @@ class NewsRepositoryImpl @Inject constructor(
                     maxRecords = 100,
                     timespan = "7d"
                 )
+                Log.d("GlobeNews", "REPO: GDELT nearby returned ${gdeltResults.size} articles")
                 stories.addAll(gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) })
 
                 // Google News local
-                val localNews = googleNewsDataSource.fetchLocal(view.latitude, view.longitude)
-                stories.addAll(localNews.map {
-                    StoryMappers.fromGoogleNews(it, view.latitude, view.longitude, null)
-                })
+                try {
+                    val localNews = googleNewsDataSource.fetchLocal(view.latitude, view.longitude)
+                    Log.d("GlobeNews", "REPO: Google News local returned ${localNews.size} items")
+                    stories.addAll(localNews.map {
+                        StoryMappers.fromGoogleNews(it, view.latitude, view.longitude, null)
+                    })
+                } catch (e: Exception) {
+                    Log.e("GlobeNews", "REPO: Google News fetch failed: ${e.message}")
+                }
             }
 
             // Deduplicate
             val deduped = deduplicateStories(stories)
+            Log.d("GlobeNews", "REPO: after dedup: ${deduped.size} stories (from ${stories.size})")
 
             // If no stories found, use fallback
             val finalStories = if (deduped.isEmpty()) {
-                Log.d(TAG, "No stories fetched, using fallback")
-                fallbackDataSource.loadFallbackStories().map { StoryMappers.fromFallback(it) }
+                Log.d("GlobeNews", "REPO: no stories found, loading fallback...")
+                val fallback = fallbackDataSource.loadFallbackStories()
+                Log.d("GlobeNews", "REPO: fallback loaded ${fallback.size} raw stories")
+                fallback.map { StoryMappers.fromFallback(it) }
             } else {
                 deduped
             }
 
+            Log.d("GlobeNews", "REPO: emitting ${finalStories.size} final stories to flow")
             storiesFlow.value = Result.Success(finalStories)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to refresh stories", e)
+            Log.e("GlobeNews", "REPO: EXCEPTION in refreshStories: ${e.message}", e)
             // Try fallback
-            val fallback = fallbackDataSource.loadFallbackStories().map { StoryMappers.fromFallback(it) }
-            if (fallback.isNotEmpty()) {
-                storiesFlow.value = Result.Success(fallback)
-            } else {
+            try {
+                val fallback = fallbackDataSource.loadFallbackStories().map { StoryMappers.fromFallback(it) }
+                Log.d("GlobeNews", "REPO: fallback after exception: ${fallback.size} stories")
+                if (fallback.isNotEmpty()) {
+                    storiesFlow.value = Result.Success(fallback)
+                } else {
+                    storiesFlow.value = Result.Error("Failed to load news: ${e.message}", e)
+                }
+            } catch (e2: Exception) {
+                Log.e("GlobeNews", "REPO: even fallback failed: ${e2.message}", e2)
                 storiesFlow.value = Result.Error("Failed to load news: ${e.message}", e)
             }
         }

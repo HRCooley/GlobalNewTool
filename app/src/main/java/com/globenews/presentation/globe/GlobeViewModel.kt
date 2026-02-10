@@ -1,5 +1,6 @@
 package com.globenews.presentation.globe
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.globenews.core.common.Constants
@@ -42,6 +43,7 @@ class GlobeViewModel @Inject constructor(
     private var observeJob: Job? = null
 
     init {
+        Log.d("GlobeNews", "VIEWMODEL: init called, triggering initial fetch")
         observeStories()
         loadStories()
     }
@@ -50,12 +52,15 @@ class GlobeViewModel @Inject constructor(
         observeJob?.cancel()
         observeJob = viewModelScope.launch {
             val state = _uiState.value
+            Log.d("GlobeNews", "VIEWMODEL: observeStories started, zoom=${state.currentView.zoom}, category=${state.selectedCategory}")
             getStoriesForView(state.currentView, state.selectedCategory).collectLatest { result ->
                 when (result) {
                     is Result.Loading -> {
+                        Log.d("GlobeNews", "VIEWMODEL: received Result.Loading")
                         _uiState.update { it.copy(isLoading = true, error = null) }
                     }
                     is Result.Success -> {
+                        Log.d("GlobeNews", "VIEWMODEL: received Result.Success with ${result.data.size} stories")
                         _uiState.update {
                             it.copy(
                                 stories = result.data,
@@ -66,6 +71,7 @@ class GlobeViewModel @Inject constructor(
                         }
                     }
                     is Result.Error -> {
+                        Log.e("GlobeNews", "VIEWMODEL: received Result.Error: ${result.message}")
                         _uiState.update {
                             it.copy(isLoading = false, error = result.message)
                         }
@@ -78,11 +84,14 @@ class GlobeViewModel @Inject constructor(
     fun loadStories() {
         viewModelScope.launch {
             val state = _uiState.value
+            Log.d("GlobeNews", "VIEWMODEL: loadStories called, zoom=${state.currentView.zoom}, category=${state.selectedCategory}")
             refreshStories(state.currentView, state.selectedCategory)
+            Log.d("GlobeNews", "VIEWMODEL: refreshStories completed")
         }
     }
 
     fun onCameraMove(view: GlobeView) {
+        Log.d("GlobeNews", "VIEWMODEL: onCameraMove lat=${view.latitude}, lon=${view.longitude}, zoom=${view.zoom}")
         _uiState.update { it.copy(currentView = view) }
         observeStories()
         loadStories()
