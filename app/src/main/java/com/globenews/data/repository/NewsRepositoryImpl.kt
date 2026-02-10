@@ -329,6 +329,8 @@ class NewsRepositoryImpl @Inject constructor(
                 rssCacheTime = Instant.now()
             }
             rssStories
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            throw e // Don't swallow cancellation
         } catch (e: Exception) {
             Log.e(TAG, "REPO: managed RSS fetch failed: ${e.message}")
             rssCache // Return stale cache if available
