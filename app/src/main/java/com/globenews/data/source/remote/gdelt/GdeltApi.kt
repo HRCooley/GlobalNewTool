@@ -6,7 +6,7 @@ import retrofit2.http.Query
 interface GdeltApi {
     @GET("doc")
     suspend fun search(
-        @Query("query", encoded = true) query: String,
+        @Query("query") query: String,
         @Query("mode") mode: String = "artlist",
         @Query("maxrecords") maxRecords: Int = 75,
         @Query("timespan") timespan: String = "24h",
