@@ -47,9 +47,14 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideGdeltApi(client: OkHttpClient, moshi: Moshi): GdeltApi {
+        // Use shorter timeouts for GDELT to fail fast
+        val gdeltClient = client.newBuilder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .build()
         return Retrofit.Builder()
             .baseUrl(Constants.GDELT_BASE_URL)
-            .client(client)
+            .client(gdeltClient)
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
             .create(GdeltApi::class.java)

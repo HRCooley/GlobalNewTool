@@ -66,29 +66,50 @@ class GdeltDataSource @Inject constructor(
         maxRecords: Int = 100,
         timespan: String = "7d"
     ): List<GdeltArticleWithLocation> {
-        val region = QueryRegion("nearby", lat, lon, radiusKm)
+        // Find the closest region's country codes for the given coordinates
+        val closestRegion = findClosestRegion(lat, lon)
+        val region = QueryRegion("nearby", lat, lon, radiusKm, closestRegion?.countryCodes ?: emptyList())
         val query = buildQuery(region, category)
-        Log.d(TAG, "GDELT nearby query: ${Constants.GDELT_BASE_URL}doc?query=$query&mode=artlist&maxrecords=$maxRecords&timespan=$timespan&format=json")
+        Log.d("GlobeNews", "GDELT: nearby query: $query")
         return try {
             val response = api.search(
                 query = query,
                 maxRecords = maxRecords,
                 timespan = timespan
             )
-            response.articles?.map { GdeltArticleWithLocation(it, region) } ?: emptyList()
+            val articles = response.articles ?: emptyList()
+            Log.d("GlobeNews", "GDELT: nearby returned ${articles.size} articles")
+            articles.map { GdeltArticleWithLocation(it, region) }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed GDELT nearby: ${e.message}")
+            Log.e("GlobeNews", "GDELT: nearby ERROR: ${e.javaClass.simpleName}: ${e.message}")
             emptyList()
         }
     }
 
+    private fun findClosestRegion(lat: Double, lon: Double): QueryRegion? {
+        return com.globenews.domain.model.GLOBAL_GRID.minByOrNull { region ->
+            val dLat = region.lat - lat
+            val dLon = region.lon - lon
+            dLat * dLat + dLon * dLon
+        }
+    }
+
     private fun buildQuery(region: QueryRegion, category: NewsCategory): String {
-        val geoClause = "near:${region.lat},${region.lon} ${region.radiusKm}km"
+        // GDELT DOC 2.0 uses sourcecountry: with FIPS codes for geographic filtering
+        val geoClause = if (region.countryCodes.isNotEmpty()) {
+            if (region.countryCodes.size == 1) {
+                "sourcecountry:${region.countryCodes.first()}"
+            } else {
+                region.countryCodes.joinToString(" OR ") { "sourcecountry:$it" }
+            }
+        } else {
+            "sourcelang:english"
+        }
         return if (category == NewsCategory.ALL || category.gdeltThemes.isEmpty()) {
-            geoClause
+            "($geoClause)"
         } else {
             val themeClause = category.gdeltThemes.joinToString(" OR ") { "theme:$it" }
-            "$geoClause AND ($themeClause)"
+            "($geoClause) ($themeClause)"
         }
     }
 }

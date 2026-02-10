@@ -80,7 +80,22 @@ class NewsRepositoryImpl @Inject constructor(
 
     override suspend fun refreshStories(view: GlobeView, category: NewsCategory) {
         Log.d("GlobeNews", "REPO: refreshStories called, zoom=${view.zoom}, category=$category")
-        storiesFlow.value = Result.Loading
+
+        // Immediately emit fallback so users see stories while network loads
+        try {
+            val fallback = fallbackDataSource.loadFallbackStories().map { StoryMappers.fromFallback(it) }
+            Log.d("GlobeNews", "REPO: emitting ${fallback.size} fallback stories immediately")
+            if (fallback.isNotEmpty()) {
+                storiesFlow.value = Result.Success(fallback)
+            } else {
+                storiesFlow.value = Result.Loading
+            }
+        } catch (e: Exception) {
+            Log.e("GlobeNews", "REPO: fallback load failed: ${e.message}")
+            storiesFlow.value = Result.Loading
+        }
+
+        // Now try to fetch fresh data from network sources
         try {
             val stories = mutableListOf<NewsStory>()
 
@@ -196,33 +211,16 @@ class NewsRepositoryImpl @Inject constructor(
             val deduped = deduplicateStories(stories)
             Log.d("GlobeNews", "REPO: after dedup: ${deduped.size} stories (from ${stories.size})")
 
-            // If no stories found, use fallback
-            val finalStories = if (deduped.isEmpty()) {
-                Log.d("GlobeNews", "REPO: no stories found, loading fallback...")
-                val fallback = fallbackDataSource.loadFallbackStories()
-                Log.d("GlobeNews", "REPO: fallback loaded ${fallback.size} raw stories")
-                fallback.map { StoryMappers.fromFallback(it) }
+            // Only replace fallback if we got real network results
+            if (deduped.isNotEmpty()) {
+                Log.d("GlobeNews", "REPO: emitting ${deduped.size} network stories to flow")
+                storiesFlow.value = Result.Success(deduped)
             } else {
-                deduped
+                Log.d("GlobeNews", "REPO: no network stories, keeping fallback")
             }
-
-            Log.d("GlobeNews", "REPO: emitting ${finalStories.size} final stories to flow")
-            storiesFlow.value = Result.Success(finalStories)
         } catch (e: Exception) {
             Log.e("GlobeNews", "REPO: EXCEPTION in refreshStories: ${e.message}", e)
-            // Try fallback
-            try {
-                val fallback = fallbackDataSource.loadFallbackStories().map { StoryMappers.fromFallback(it) }
-                Log.d("GlobeNews", "REPO: fallback after exception: ${fallback.size} stories")
-                if (fallback.isNotEmpty()) {
-                    storiesFlow.value = Result.Success(fallback)
-                } else {
-                    storiesFlow.value = Result.Error("Failed to load news: ${e.message}", e)
-                }
-            } catch (e2: Exception) {
-                Log.e("GlobeNews", "REPO: even fallback failed: ${e2.message}", e2)
-                storiesFlow.value = Result.Error("Failed to load news: ${e.message}", e)
-            }
+            // Fallback was already emitted at start, so just log the error
         }
     }
 
@@ -263,16 +261,23 @@ class NewsRepositoryImpl @Inject constructor(
     }
 
     private fun getSubRegions(view: GlobeView): List<QueryRegion> {
+        // Find the closest global grid region for country codes
+        val closest = GLOBAL_GRID.minByOrNull { region ->
+            val dLat = region.lat - view.latitude
+            val dLon = region.lon - view.longitude
+            dLat * dLat + dLon * dLon
+        }
+        val codes = closest?.countryCodes ?: emptyList()
         val bounds = view.bounds ?: return listOf(
-            QueryRegion("center", view.latitude, view.longitude, 2000)
+            QueryRegion("center", view.latitude, view.longitude, 2000, codes)
         )
         val latStep = (bounds.north - bounds.south) / 2
         val lonStep = (bounds.east - bounds.west) / 2
         return listOf(
-            QueryRegion("NW", bounds.north - latStep / 2, bounds.west + lonStep / 2, 1500),
-            QueryRegion("NE", bounds.north - latStep / 2, bounds.east - lonStep / 2, 1500),
-            QueryRegion("SW", bounds.south + latStep / 2, bounds.west + lonStep / 2, 1500),
-            QueryRegion("SE", bounds.south + latStep / 2, bounds.east - lonStep / 2, 1500),
+            QueryRegion("NW", bounds.north - latStep / 2, bounds.west + lonStep / 2, 1500, codes),
+            QueryRegion("NE", bounds.north - latStep / 2, bounds.east - lonStep / 2, 1500, codes),
+            QueryRegion("SW", bounds.south + latStep / 2, bounds.west + lonStep / 2, 1500, codes),
+            QueryRegion("SE", bounds.south + latStep / 2, bounds.east - lonStep / 2, 1500, codes),
         )
     }
 
