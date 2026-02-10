@@ -165,6 +165,10 @@ class RssDataSource @Inject constructor(
             .build()
 
         val response = rssClient.newCall(request).execute()
+        if (!response.isSuccessful) {
+            response.close()
+            throw java.io.IOException("HTTP ${response.code} for ${feed.name}")
+        }
         val body = response.body?.string() ?: return@withContext emptyList()
         parseRss(body, config)
     }
