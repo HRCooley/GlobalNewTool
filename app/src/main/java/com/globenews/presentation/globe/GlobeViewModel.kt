@@ -52,6 +52,7 @@ class GlobeViewModel @Inject constructor(
 
     private var observeJob: Job? = null
     private var refreshJob: Job? = null
+    private var fetchJob: Job? = null
     private var currentZoomTier: ZoomTier = ZoomTier.WORLD
 
     init {
@@ -94,7 +95,8 @@ class GlobeViewModel @Inject constructor(
     }
 
     fun loadStories() {
-        viewModelScope.launch {
+        fetchJob?.cancel()
+        fetchJob = viewModelScope.launch {
             val state = _uiState.value
             Log.d("GlobeNews", "VIEWMODEL: loadStories called, zoom=${state.currentView.zoom}, category=${state.selectedCategory}")
             refreshStories(state.currentView, state.selectedCategory)

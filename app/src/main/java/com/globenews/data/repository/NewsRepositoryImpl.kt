@@ -126,22 +126,28 @@ class NewsRepositoryImpl @Inject constructor(
                     var rssCount = 0
                     var googleCount = 0
 
-                    Log.d("GlobeNews", "REPO: fetching GDELT for ${GLOBAL_GRID.size} global regions...")
-                    val gdeltResults = gdeltDataSource.fetchForRegions(
-                        regions = GLOBAL_GRID,
-                        category = category,
-                        maxRecords = 75,
-                        timespan = "24h"
-                    )
-                    Log.d("GlobeNews", "REPO: GDELT returned ${gdeltResults.size} raw articles")
-                    val gdeltStories = gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) }
-                    gdeltCount = gdeltStories.size
-                    Log.d("GlobeNews", "REPO: GDELT mapped to $gdeltCount stories")
-                    stories.addAll(gdeltStories)
+                    // GDELT — wrapped so RSS still runs if GDELT fails
+                    try {
+                        Log.d(TAG, "REPO: fetching GDELT for ${GLOBAL_GRID.size} global regions...")
+                        val gdeltResults = gdeltDataSource.fetchForRegions(
+                            regions = GLOBAL_GRID,
+                            category = category,
+                            maxRecords = 75,
+                            timespan = "24h"
+                        )
+                        Log.d(TAG, "REPO: GDELT returned ${gdeltResults.size} raw articles")
+                        val gdeltStories = gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) }
+                        gdeltCount = gdeltStories.size
+                        Log.d(TAG, "REPO: GDELT mapped to $gdeltCount stories")
+                        stories.addAll(gdeltStories)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "REPO: GDELT global fetch failed: ${e.message}")
+                    }
 
                     // Managed RSS feeds (297 bundled + user custom) — cached
                     val rssStories = getCachedRssStories()
                     rssCount = rssStories.size
+                    Log.d(TAG, "REPO: RSS contributed $rssCount stories")
                     stories.addAll(rssStories)
 
                     // Optional sources
@@ -179,17 +185,21 @@ class NewsRepositoryImpl @Inject constructor(
                 var rssCount = 0
 
                 // Continental view — sub-queries
-                val subRegions = getSubRegions(view)
-                val gdeltResults = gdeltDataSource.fetchForRegions(
-                    regions = subRegions,
-                    category = category,
-                    maxRecords = 100,
-                    timespan = "48h"
-                )
-                val gdeltStories = gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) }
-                gdeltCount = gdeltStories.size
-                Log.d("GlobeNews", "REPO: GDELT continental returned ${gdeltResults.size} articles, mapped to $gdeltCount stories")
-                stories.addAll(gdeltStories)
+                try {
+                    val subRegions = getSubRegions(view)
+                    val gdeltResults = gdeltDataSource.fetchForRegions(
+                        regions = subRegions,
+                        category = category,
+                        maxRecords = 100,
+                        timespan = "48h"
+                    )
+                    val gdeltStories = gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) }
+                    gdeltCount = gdeltStories.size
+                    Log.d(TAG, "REPO: GDELT continental returned ${gdeltResults.size} articles, mapped to $gdeltCount stories")
+                    stories.addAll(gdeltStories)
+                } catch (e: Exception) {
+                    Log.e(TAG, "REPO: GDELT continental fetch failed: ${e.message}")
+                }
 
                 // Managed RSS feeds — cached
                 val rssStories = getCachedRssStories()
@@ -206,22 +216,24 @@ class NewsRepositoryImpl @Inject constructor(
                 var rssCount = 0
 
                 // City/region view — single query + Google News local + cached RSS
-                // Approximate visible radius from zoom level
-                // zoom 8 ~ 500km, zoom 10 ~ 150km, zoom 12 ~ 40km
-                val radiusKm = (40000.0 / Math.pow(2.0, view.zoom)).toInt().coerceIn(50, 2000)
-                Log.d("GlobeNews", "REPO: GDELT nearby lat=${view.latitude}, lon=${view.longitude}, radius=${radiusKm}km")
-                val gdeltResults = gdeltDataSource.fetchNearby(
-                    lat = view.latitude,
-                    lon = view.longitude,
-                    radiusKm = radiusKm,
-                    category = category,
-                    maxRecords = 100,
-                    timespan = "7d"
-                )
-                val gdeltStories = gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) }
-                gdeltCount = gdeltStories.size
-                Log.d("GlobeNews", "REPO: GDELT nearby returned ${gdeltResults.size} articles, mapped to $gdeltCount stories")
-                stories.addAll(gdeltStories)
+                try {
+                    val radiusKm = (40000.0 / Math.pow(2.0, view.zoom)).toInt().coerceIn(50, 2000)
+                    Log.d(TAG, "REPO: GDELT nearby lat=${view.latitude}, lon=${view.longitude}, radius=${radiusKm}km")
+                    val gdeltResults = gdeltDataSource.fetchNearby(
+                        lat = view.latitude,
+                        lon = view.longitude,
+                        radiusKm = radiusKm,
+                        category = category,
+                        maxRecords = 100,
+                        timespan = "7d"
+                    )
+                    val gdeltStories = gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) }
+                    gdeltCount = gdeltStories.size
+                    Log.d(TAG, "REPO: GDELT nearby returned ${gdeltResults.size} articles, mapped to $gdeltCount stories")
+                    stories.addAll(gdeltStories)
+                } catch (e: Exception) {
+                    Log.e(TAG, "REPO: GDELT local fetch failed: ${e.message}")
+                }
 
                 // Google News local
                 try {
