@@ -9,6 +9,7 @@
 .cxx
 local.properties
 *.apk
+!GlobeNews-debug.apk
 *.aab
 *.ap_
 *.dex
