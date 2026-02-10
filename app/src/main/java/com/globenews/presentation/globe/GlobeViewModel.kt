@@ -8,14 +8,17 @@ import com.globenews.core.common.Result
 import com.globenews.domain.model.GlobeView
 import com.globenews.domain.model.NewsCategory
 import com.globenews.domain.model.NewsStory
+import com.globenews.data.source.local.ManagedFeedDao
 import com.globenews.domain.usecase.GetStoriesForViewUseCase
 import com.globenews.domain.usecase.RefreshStoriesUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -34,11 +37,15 @@ data class GlobeUiState(
 @HiltViewModel
 class GlobeViewModel @Inject constructor(
     private val getStoriesForView: GetStoriesForViewUseCase,
-    private val refreshStories: RefreshStoriesUseCase
+    private val refreshStories: RefreshStoriesUseCase,
+    managedFeedDao: ManagedFeedDao
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(GlobeUiState())
     val uiState: StateFlow<GlobeUiState> = _uiState.asStateFlow()
+
+    val brokenFeedCount: StateFlow<Int> = managedFeedDao.getBrokenCountFlow()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     private var observeJob: Job? = null
 

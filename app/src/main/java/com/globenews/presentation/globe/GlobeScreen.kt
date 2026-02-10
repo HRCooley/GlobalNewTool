@@ -28,6 +28,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -59,6 +64,8 @@ fun GlobeScreen(
     var webView by remember { mutableStateOf<WebView?>(null) }
     var showSettings by remember { mutableStateOf(false) }
     var showFeedManagement by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val brokenCount by viewModel.brokenFeedCount.collectAsState()
 
     if (showFeedManagement) {
         FeedManagementScreen(onBack = { showFeedManagement = false })
@@ -115,6 +122,20 @@ fun GlobeScreen(
     LaunchedEffect(uiState.baseLayer) {
         if (isMapReady) {
             webView?.setGlobeBaseLayer(uiState.baseLayer)
+        }
+    }
+
+    // Broken feed notification
+    LaunchedEffect(brokenCount, uiState.isLoading) {
+        if (brokenCount > 0 && !uiState.isLoading) {
+            val result = snackbarHostState.showSnackbar(
+                message = "$brokenCount RSS feeds are failing — tap to manage",
+                actionLabel = "View",
+                duration = SnackbarDuration.Long
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                showFeedManagement = true
+            }
         }
     }
 
@@ -241,6 +262,14 @@ fun GlobeScreen(
                 }
             }
         }
+
+        // Snackbar for broken feeds
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 120.dp)
+        )
 
         // Story detail bottom sheet
         uiState.selectedStory?.let { story ->
