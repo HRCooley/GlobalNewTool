@@ -98,7 +98,7 @@ class NewsRepositoryImpl @Inject constructor(
     override suspend fun refreshStories(view: GlobeView, category: NewsCategory) {
         Log.d("GlobeNews", "REPO: refreshStories called, zoom=${view.zoom}, category=$category")
 
-        // Only emit fallback if we don't already have real data
+        // Step 1: Show cached/fallback instantly
         val current = storiesFlow.value
         val hasRealData = current is Result.Success && current.data.isNotEmpty()
         if (!hasRealData) {
@@ -138,163 +138,96 @@ class NewsRepositoryImpl @Inject constructor(
             }
         }
 
-        // Now try to fetch fresh data from network sources
+        // Step 2-5: Viewport-driven incremental fetch
         try {
             val stories = mutableListOf<NewsStory>()
+            var gdeltCount = 0
+            var rssCount = 0
 
-            if (view.zoom < Constants.ZOOM_WORLD_THRESHOLD) {
-                Log.d("GlobeNews", "REPO: GLOBAL view path (zoom ${view.zoom} < ${Constants.ZOOM_WORLD_THRESHOLD})")
-                // Global view — use grid
-                val cacheValid = Duration.between(globalGridCacheTime, Instant.now()).toMinutes() < Constants.GLOBAL_CACHE_MINUTES
-                    && globalGridCacheCategory == category
-                    && globalGridCache.isNotEmpty()
-
-                if (cacheValid) {
-                    Log.d("GlobeNews", "REPO: using cached global grid (${globalGridCache.size} stories)")
-                    stories.addAll(globalGridCache)
-                } else {
-                    var gdeltCount = 0
-                    var rssCount = 0
-                    var googleCount = 0
-
-                    // GDELT — wrapped so RSS still runs if GDELT fails
+            // ── STEP 2: Fast viewport GDELT ──
+            _diagnostics.value = _diagnostics.value.copy(
+                gdeltStatus = "Fetching viewport...",
+                gdeltRegionsTotal = 1,
+                gdeltRegionsSucceeded = 0,
+                gdeltRegionsFailed = 0,
+                gdeltRegionsRateLimited = 0
+            )
+            try {
+                val gdeltResults = if (view.zoom < 3.0) {
+                    // World zoom: quick 5-region sample instead of all 27
+                    Log.d(TAG, "REPO: GLOBAL quick-world fetch (5 regions)")
                     _diagnostics.value = _diagnostics.value.copy(
-                        gdeltStatus = "Fetching ${GLOBAL_GRID.size} regions...",
-                        gdeltRegionsTotal = GLOBAL_GRID.size,
-                        gdeltRegionsSucceeded = 0,
-                        gdeltRegionsFailed = 0,
-                        gdeltRegionsRateLimited = 0
+                        gdeltStatus = "Fetching 5 sample regions...",
+                        gdeltRegionsTotal = 5
                     )
-                    try {
-                        Log.d(TAG, "REPO: fetching GDELT for ${GLOBAL_GRID.size} global regions...")
-                        var regionsOk = 0
-                        var regionsFail = 0
-                        var regionsRateLimit = 0
-                        val gdeltResults = gdeltDataSource.fetchForRegions(
-                            regions = GLOBAL_GRID,
-                            category = category,
-                            maxRecords = 75,
-                            timespan = "24h",
-                            onRegionResult = { result ->
-                                if (result.succeeded) regionsOk++ else regionsFail++
-                                if (result.rateLimited) regionsRateLimit++
-                                val logResult = if (result.succeeded) "OK (${result.articleCount} articles)"
-                                    else result.error ?: "Failed"
-                                val rateLimitNote = if (regionsRateLimit > 0) " ($regionsRateLimit regions rate-limited)" else ""
-                                _diagnostics.value = _diagnostics.value
-                                    .addLog("GDELT", result.regionName, logResult)
-                                    .copy(
-                                        gdeltRegionsSucceeded = regionsOk,
-                                        gdeltRegionsFailed = regionsFail,
-                                        gdeltRegionsRateLimited = regionsRateLimit,
-                                        gdeltStatus = "$regionsOk/${GLOBAL_GRID.size} regions done ($regionsFail failed)$rateLimitNote"
-                                    )
-                            }
-                        )
-                        Log.d(TAG, "REPO: GDELT returned ${gdeltResults.size} raw articles")
-                        val gdeltStories = gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) }
-                        gdeltCount = gdeltStories.size
-                        Log.d(TAG, "REPO: GDELT mapped to $gdeltCount stories")
-                        stories.addAll(gdeltStories)
-                        val rateLimitNote = if (regionsRateLimit > 0) ". $regionsRateLimit regions rate-limited" else ""
-                        _diagnostics.value = _diagnostics.value.copy(
-                            gdeltStatus = "$gdeltCount stories — $regionsOk/${GLOBAL_GRID.size} regions OK, $regionsFail failed$rateLimitNote",
-                            gdeltRegionsSucceeded = regionsOk,
-                            gdeltRegionsFailed = regionsFail,
-                            gdeltRegionsRateLimited = regionsRateLimit
-                        )
-                    } catch (e: Exception) {
-                        Log.e(TAG, "REPO: GDELT global fetch failed: ${e.message}")
-                        _diagnostics.value = _diagnostics.value.copy(gdeltStatus = "FAILED: ${e.message}")
-                    }
-
-                    // Push GDELT results to map immediately — don't wait for slow RSS
-                    if (stories.isNotEmpty()) {
-                        val interim = deduplicateStories(stories)
-                            .sortedByDescending { it.publishedAt }
-                            .take(Constants.MAX_TOTAL_STORIES)
-                        storiesFlow.value = Result.Success(interim)
-                        Log.d(TAG, "REPO: interim update — ${interim.size} GDELT stories pushed to map")
-                    }
-
-                    // Managed RSS feeds (297 bundled + user custom) — cached
-                    _diagnostics.value = _diagnostics.value.copy(rssStatus = "Fetching feeds...")
-                    val rssStories = getCachedRssStories()
-                    rssCount = rssStories.size
-                    Log.d(TAG, "REPO: RSS contributed $rssCount stories")
-                    stories.addAll(rssStories)
-                    _diagnostics.value = _diagnostics.value.copy(rssStatus = "$rssCount stories")
-
-                    // Optional sources
-                    if (newsApiDataSource.isAvailable) {
-                        try {
-                            val newsApiItems = newsApiDataSource.fetchHeadlines()
-                            Log.d("GlobeNews", "REPO: NewsAPI returned ${newsApiItems.size} items")
-                            stories.addAll(newsApiItems.mapNotNull { StoryMappers.fromNewsApi(it) })
-                        } catch (e: Exception) {
-                            Log.e("GlobeNews", "REPO: NewsAPI failed: ${e.message}")
+                    val quickRegions = listOf(
+                        GLOBAL_GRID[0],  // West Africa
+                        GLOBAL_GRID[4],  // Eastern US/Canada
+                        GLOBAL_GRID[10], // Western Europe
+                        GLOBAL_GRID[15], // Middle East
+                        GLOBAL_GRID[19]  // Southeast Asia
+                    )
+                    var regionsOk = 0
+                    var regionsFail = 0
+                    gdeltDataSource.fetchForRegions(
+                        regions = quickRegions,
+                        category = category,
+                        maxRecords = 75,
+                        timespan = "24h",
+                        onRegionResult = { result ->
+                            if (result.succeeded) regionsOk++ else regionsFail++
+                            val logResult = if (result.succeeded) "OK (${result.articleCount} articles)"
+                                else result.error ?: "Failed"
+                            _diagnostics.value = _diagnostics.value
+                                .addLog("GDELT", result.regionName, logResult)
+                                .copy(
+                                    gdeltRegionsSucceeded = regionsOk,
+                                    gdeltRegionsFailed = regionsFail,
+                                    gdeltRegionsRateLimited = if (result.rateLimited) 1 else 0,
+                                    gdeltStatus = "$regionsOk/5 quick regions done"
+                                )
                         }
-                    }
-                    if (gNewsDataSource.isAvailable) {
-                        try {
-                            val gNewsItems = gNewsDataSource.fetchHeadlines()
-                            Log.d("GlobeNews", "REPO: GNews returned ${gNewsItems.size} items")
-                            stories.addAll(gNewsItems.mapNotNull { StoryMappers.fromGNews(it) })
-                        } catch (e: Exception) {
-                            Log.e("GlobeNews", "REPO: GNews failed: ${e.message}")
+                    )
+                } else if (view.zoom < Constants.ZOOM_WORLD_THRESHOLD) {
+                    // Continental zoom: viewport query
+                    Log.d(TAG, "REPO: viewport GDELT at zoom=${view.zoom}")
+                    gdeltDataSource.fetchForViewport(
+                        centerLat = view.latitude,
+                        centerLon = view.longitude,
+                        zoom = view.zoom,
+                        category = category,
+                        onRegionResult = { result ->
+                            val logResult = if (result.succeeded) "OK (${result.articleCount} articles)"
+                                else result.error ?: "Failed"
+                            _diagnostics.value = _diagnostics.value
+                                .addLog("GDELT", result.regionName, logResult)
+                                .copy(
+                                    gdeltRegionsSucceeded = if (result.succeeded) 1 else 0,
+                                    gdeltRegionsFailed = if (!result.succeeded) 1 else 0,
+                                    gdeltRegionsRateLimited = if (result.rateLimited) 1 else 0,
+                                    gdeltStatus = if (result.succeeded) "OK — ${result.articleCount} articles" else "Failed: ${result.error}"
+                                )
                         }
-                    }
-
-                    Log.d("GlobeNews", "REPO: total stories before dedup: ${stories.size}")
-                    globalGridCache = stories.toList()
-                    globalGridCacheTime = Instant.now()
-                    globalGridCacheCategory = category
-
-                    val totalDeduped = deduplicateStories(stories).size
-                    Log.d("GlobeNews", "=== COVERAGE: GDELT=$gdeltCount, GoogleRSS=$googleCount, RSS=$rssCount, Total=$totalDeduped ===")
-                    logBrokenFeeds()
-                }
-            } else if (view.zoom < Constants.ZOOM_LOCAL_THRESHOLD) {
-                Log.d("GlobeNews", "REPO: CONTINENTAL view path")
-                var gdeltCount = 0
-                var rssCount = 0
-
-                // Continental view — sub-queries
-                try {
+                    )
+                } else if (view.zoom < Constants.ZOOM_LOCAL_THRESHOLD) {
+                    // Continental: sub-region queries
+                    Log.d(TAG, "REPO: CONTINENTAL sub-region GDELT")
                     val subRegions = getSubRegions(view)
-                    val gdeltResults = gdeltDataSource.fetchForRegions(
+                    _diagnostics.value = _diagnostics.value.copy(
+                        gdeltRegionsTotal = subRegions.size,
+                        gdeltStatus = "Fetching ${subRegions.size} sub-regions..."
+                    )
+                    gdeltDataSource.fetchForRegions(
                         regions = subRegions,
                         category = category,
                         maxRecords = 100,
                         timespan = "48h"
                     )
-                    val gdeltStories = gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) }
-                    gdeltCount = gdeltStories.size
-                    Log.d(TAG, "REPO: GDELT continental returned ${gdeltResults.size} articles, mapped to $gdeltCount stories")
-                    stories.addAll(gdeltStories)
-                } catch (e: Exception) {
-                    Log.e(TAG, "REPO: GDELT continental fetch failed: ${e.message}")
-                }
-
-                // Managed RSS feeds — cached
-                val rssStories = getCachedRssStories()
-                rssCount = rssStories.size
-                stories.addAll(rssStories)
-
-                val totalDeduped = deduplicateStories(stories).size
-                Log.d(TAG, "=== COVERAGE: GDELT=$gdeltCount, GoogleRSS=0, RSS=$rssCount, Total=$totalDeduped ===")
-                logBrokenFeeds()
-            } else {
-                Log.d(TAG, "REPO: LOCAL view path")
-                var gdeltCount = 0
-                var googleCount = 0
-                var rssCount = 0
-
-                // City/region view — single query + Google News local + cached RSS
-                try {
+                } else {
+                    // Local: nearby query
+                    Log.d(TAG, "REPO: LOCAL nearby GDELT")
                     val radiusKm = (40000.0 / Math.pow(2.0, view.zoom)).toInt().coerceIn(50, 2000)
-                    Log.d(TAG, "REPO: GDELT nearby lat=${view.latitude}, lon=${view.longitude}, radius=${radiusKm}km")
-                    val gdeltResults = gdeltDataSource.fetchNearby(
+                    gdeltDataSource.fetchNearby(
                         lat = view.latitude,
                         lon = view.longitude,
                         radiusKm = radiusKm,
@@ -302,37 +235,77 @@ class NewsRepositoryImpl @Inject constructor(
                         maxRecords = 100,
                         timespan = "7d"
                     )
-                    val gdeltStories = gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) }
-                    gdeltCount = gdeltStories.size
-                    Log.d(TAG, "REPO: GDELT nearby returned ${gdeltResults.size} articles, mapped to $gdeltCount stories")
-                    stories.addAll(gdeltStories)
-                } catch (e: Exception) {
-                    Log.e(TAG, "REPO: GDELT local fetch failed: ${e.message}")
                 }
 
-                // Google News local
+                val gdeltStories = gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) }
+                gdeltCount = gdeltStories.size
+                Log.d(TAG, "REPO: GDELT returned $gdeltCount stories")
+                stories.addAll(gdeltStories)
+                _diagnostics.value = _diagnostics.value.copy(
+                    gdeltStatus = "$gdeltCount stories"
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "REPO: GDELT fetch failed: ${e.message}")
+                _diagnostics.value = _diagnostics.value.copy(gdeltStatus = "FAILED: ${e.message}")
+            }
+
+            // ── STEP 3: Push GDELT interim to map immediately ──
+            if (stories.isNotEmpty()) {
+                val interim = deduplicateStories(stories)
+                    .sortedByDescending { it.publishedAt }
+                    .take(Constants.MAX_TOTAL_STORIES)
+                storiesFlow.value = Result.Success(interim)
+                Log.d(TAG, "REPO: interim update — ${interim.size} GDELT stories pushed to map")
+            }
+
+            // ── STEP 4: Viewport RSS (only feeds on screen + international) ──
+            _diagnostics.value = _diagnostics.value.copy(rssStatus = "Fetching viewport feeds...")
+            try {
+                val rssStories = getViewportRssStories(view)
+                rssCount = rssStories.size
+                Log.d(TAG, "REPO: RSS contributed $rssCount stories")
+                stories.addAll(rssStories)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "REPO: RSS fetch failed: ${e.message}")
+                _diagnostics.value = _diagnostics.value.copy(rssStatus = "FAILED: ${e.message}")
+            }
+
+            // Google News local (for zoomed-in views)
+            if (view.zoom >= Constants.ZOOM_LOCAL_THRESHOLD) {
                 try {
                     val localNews = googleNewsDataSource.fetchLocal(view.latitude, view.longitude)
-                    googleCount = localNews.size
-                    Log.d(TAG, "REPO: Google News local returned $googleCount items")
+                    Log.d(TAG, "REPO: Google News local returned ${localNews.size} items")
                     stories.addAll(localNews.map {
                         StoryMappers.fromGoogleNews(it, view.latitude, view.longitude, null)
                     })
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Log.e(TAG, "REPO: Google News fetch failed: ${e.message}")
                 }
-
-                // Managed RSS feeds — cached (adds global context to local view)
-                val rssStories = getCachedRssStories()
-                rssCount = rssStories.size
-                stories.addAll(rssStories)
-
-                val totalDeduped = deduplicateStories(stories).size
-                Log.d(TAG, "=== COVERAGE: GDELT=$gdeltCount, GoogleRSS=$googleCount, RSS=$rssCount, Total=$totalDeduped ===")
-                logBrokenFeeds()
             }
 
-            // Deduplicate and cap
+            // Optional API sources
+            if (newsApiDataSource.isAvailable) {
+                try {
+                    val items = newsApiDataSource.fetchHeadlines()
+                    stories.addAll(items.mapNotNull { StoryMappers.fromNewsApi(it) })
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { Log.e(TAG, "REPO: NewsAPI failed: ${e.message}") }
+            }
+            if (gNewsDataSource.isAvailable) {
+                try {
+                    val items = gNewsDataSource.fetchHeadlines()
+                    stories.addAll(items.mapNotNull { StoryMappers.fromGNews(it) })
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { Log.e(TAG, "REPO: GNews failed: ${e.message}") }
+            }
+
+            // ── STEP 5: Deduplicate, cap, emit final ──
             val dedupedRaw = deduplicateStories(stories)
             val deduped = if (dedupedRaw.size > Constants.MAX_TOTAL_STORIES) {
                 Log.w("GlobeNews", "REPO: capping stories from ${dedupedRaw.size} to ${Constants.MAX_TOTAL_STORIES}")
@@ -342,21 +315,61 @@ class NewsRepositoryImpl @Inject constructor(
             }
             Log.d("GlobeNews", "REPO: after dedup: ${deduped.size} stories (from ${stories.size})")
 
-            // Only replace fallback if we got real network results
             if (deduped.isNotEmpty()) {
-                Log.e("GlobeNews", ">>> LIVE DATA OK: ${deduped.size} stories replacing fallback")
+                Log.d("GlobeNews", ">>> LIVE DATA OK: ${deduped.size} stories")
                 storiesFlow.value = Result.Success(deduped)
                 _diagnostics.value = _diagnostics.value.copy(
-                    liveTotal = "${deduped.size} live stories (from ${stories.size} pre-dedup)",
-                    pipelineSummary = "LIVE — ${deduped.size} stories from network sources"
+                    liveTotal = "${deduped.size} live stories (GDELT=$gdeltCount, RSS=$rssCount)",
+                    pipelineSummary = "LIVE — ${deduped.size} stories"
                 )
+
+                // Cache for future use
+                globalGridCache = deduped
+                globalGridCacheTime = Instant.now()
+                globalGridCacheCategory = category
             } else {
-                Log.e("GlobeNews", ">>> LIVE DATA FAILED: 0 network stories. ALL sources returned empty. App is showing FALLBACK ONLY. Check GDELT/RSS errors above.")
+                Log.e("GlobeNews", ">>> LIVE DATA FAILED: 0 network stories")
                 _diagnostics.value = _diagnostics.value.copy(
                     liveTotal = "0 live stories",
-                    pipelineSummary = "FALLBACK ONLY — all network sources returned 0. Check GDELT and RSS status above."
+                    pipelineSummary = "FALLBACK ONLY — all sources returned 0"
                 )
             }
+
+            // ── STEP 6: Background grid fill (world zoom only, non-blocking) ──
+            if (view.zoom < Constants.ZOOM_WORLD_THRESHOLD && deduped.isNotEmpty()) {
+                Log.d(TAG, "REPO: starting background grid fill")
+                _diagnostics.value = _diagnostics.value.copy(
+                    pipelineSummary = "LIVE — ${deduped.size} stories. Background fill running..."
+                )
+                try {
+                    gdeltDataSource.backgroundFillGrid(category) { regionName, regionArticles ->
+                        val regionStories = regionArticles.mapNotNull { StoryMappers.fromGdelt(it) }
+                        val currentData = (storiesFlow.value as? Result.Success)?.data ?: emptyList()
+                        val merged = deduplicateStories(currentData + regionStories)
+                            .sortedByDescending { it.publishedAt }
+                            .take(Constants.MAX_TOTAL_STORIES)
+                        if (merged.size > currentData.size) {
+                            storiesFlow.value = Result.Success(merged)
+                            _diagnostics.value = _diagnostics.value
+                                .addLog("GDELT", regionName, "bg +${merged.size - currentData.size}")
+                                .copy(
+                                    liveTotal = "${merged.size} live stories (filling...)",
+                                    pipelineSummary = "LIVE — ${merged.size} stories. Background fill..."
+                                )
+                        }
+                    }
+                    val finalCount = (storiesFlow.value as? Result.Success)?.data?.size ?: 0
+                    _diagnostics.value = _diagnostics.value.copy(
+                        pipelineSummary = "LIVE — $finalCount stories (fill complete)"
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "REPO: background fill failed: ${e.message}")
+                }
+            }
+
+            logBrokenFeeds()
         } catch (e: CancellationException) {
             Log.d("GlobeNews", "REPO: refreshStories cancelled, rethrowing")
             throw e
@@ -365,7 +378,6 @@ class NewsRepositoryImpl @Inject constructor(
             _diagnostics.value = _diagnostics.value.copy(
                 pipelineSummary = "EXCEPTION: ${e.javaClass.simpleName}: ${e.message}"
             )
-            // Fallback was already emitted at start, so just log the error
         }
     }
 
@@ -467,6 +479,66 @@ class NewsRepositoryImpl @Inject constructor(
                 rssStatus = "FAILED: ${e.message}"
             )
             rssCache // Return stale cache if available
+        }
+    }
+
+    /** Get RSS stories for the current viewport — uses bounds query for zoomed-in views */
+    private suspend fun getViewportRssStories(view: GlobeView): List<NewsStory> {
+        // World zoom or no bounds: use full cached fetch
+        if (view.zoom < Constants.ZOOM_WORLD_THRESHOLD || view.bounds == null) {
+            return getCachedRssStories()
+        }
+
+        // Zoomed in: fetch only feeds within viewport bounds + international
+        val bounds = view.bounds
+        var feedsOk = 0
+        var feedsFail = 0
+        var feedsTotal = 0
+
+        return try {
+            val rssItems = rssDataSource.fetchForViewport(
+                north = bounds.north,
+                south = bounds.south,
+                east = bounds.east,
+                west = bounds.west,
+                onTotalKnown = { total ->
+                    feedsTotal = total
+                    _diagnostics.value = _diagnostics.value.copy(
+                        rssFeedsTotal = total,
+                        rssFeedsSucceeded = 0,
+                        rssFeedsFailed = 0,
+                        rssFeedsStillFetching = total,
+                        rssStatus = "0 succeeded, 0 failed, $total viewport feeds"
+                    )
+                },
+                onFeedResult = { result ->
+                    if (result.succeeded) feedsOk++ else feedsFail++
+                    val stillFetching = feedsTotal - feedsOk - feedsFail
+                    val logResult = if (result.succeeded) "OK (${result.itemCount} items)"
+                        else result.error ?: "Failed"
+                    _diagnostics.value = _diagnostics.value
+                        .addLog("RSS", result.feedName, logResult)
+                        .copy(
+                            rssFeedsSucceeded = feedsOk,
+                            rssFeedsFailed = feedsFail,
+                            rssFeedsStillFetching = stillFetching,
+                            rssStatus = "$feedsOk succeeded, $feedsFail failed, $stillFetching still fetching"
+                        )
+                }
+            )
+            val rssStories = rssItems.map { StoryMappers.fromRss(it) }
+            Log.d(TAG, "REPO: viewport RSS returned ${rssStories.size} stories")
+            _diagnostics.value = _diagnostics.value.copy(
+                rssStatus = "${rssStories.size} stories — $feedsOk/$feedsTotal feeds OK",
+                rssFeedsStillFetching = 0
+            )
+            rssStories
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "REPO: viewport RSS fetch failed: ${e.message}")
+            _diagnostics.value = _diagnostics.value.copy(rssStatus = "FAILED: ${e.message}")
+            rssCache // Fall back to stale cache if available
         }
     }
 
