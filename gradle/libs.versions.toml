@@ -20,6 +20,7 @@ material3 = "1.3.1"
 webkit = "1.12.1"
 xmlutil = "0.90.3"
 desugar = "2.1.4"
+work = "2.9.1"
 
 [libraries]
 # AndroidX Core
@@ -76,6 +77,9 @@ coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coi
 # XML Parsing
 xmlutil-core = { group = "io.github.pdvrieze.xmlutil", name = "core-android", version.ref = "xmlutil" }
 xmlutil-serialization = { group = "io.github.pdvrieze.xmlutil", name = "serialization-android", version.ref = "xmlutil" }
+
+# WorkManager
+work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
 
 # Desugaring
 desugar-jdk = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugar" }
