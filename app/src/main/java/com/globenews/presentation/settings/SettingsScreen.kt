@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -28,6 +29,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -43,6 +45,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -138,9 +142,31 @@ fun SettingsScreen(
                 }
             }
 
-            // Scrollable diagnostics log
+            // Scrollable diagnostics log with copy button
             if (diagnostics.logEntries.isNotEmpty()) {
-                Text("Fetch Log (last ${diagnostics.logEntries.size})", style = MaterialTheme.typography.titleSmall)
+                val clipboardManager = LocalClipboardManager.current
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Fetch Log (last ${diagnostics.logEntries.size})",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            val logText = diagnostics.logEntries.joinToString("\n") { entry ->
+                                val tag = if (entry.source == "GDELT") "GDL" else "RSS"
+                                "[$tag] ${entry.name}: ${entry.result}"
+                            }
+                            clipboardManager.setText(AnnotatedString(logText))
+                        },
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Text("Copy Log", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
                 DiagnosticLogPanel(entries = diagnostics.logEntries)
             }
 
