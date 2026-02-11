@@ -66,6 +66,8 @@ class NewsRepositoryImpl @Inject constructor(
     private var rssCache: List<NewsStory> = emptyList()
     private var networkTestDone = false
     private var rssCacheTime: Instant = Instant.EPOCH
+    private var queriesThisSession = 0
+    private val MAX_QUERIES = 40
 
     override fun getStoriesForView(
         view: GlobeView,
@@ -141,6 +143,30 @@ class NewsRepositoryImpl @Inject constructor(
         } else {
             Log.d(TAG, "REPO: skipping fallback, already have ${(current as Result.Success).data.size} stories")
         }
+
+        // Session query cap — serve from cache only when budget exhausted
+        if (queriesThisSession >= MAX_QUERIES) {
+            Log.d(TAG, "REPO: query cap reached ($queriesThisSession/$MAX_QUERIES), cache only")
+            _diagnostics.value = _diagnostics.value.copy(
+                pipelineSummary = "CACHE ONLY — query cap ($MAX_QUERIES) reached"
+            )
+            try {
+                val bounds = view.bounds
+                val maxAge = System.currentTimeMillis() - (24 * 60 * 60 * 1000L)
+                val cached = if (bounds != null) {
+                    storyDao.getInBounds(bounds.north, bounds.south, bounds.east, bounds.west, maxAge)
+                } else {
+                    storyDao.getInBounds(90.0, -90.0, 180.0, -180.0, maxAge)
+                }
+                if (cached.isNotEmpty()) {
+                    storiesFlow.value = Result.Success(cached.map { StoryMappers.fromEntity(it) })
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "REPO: cache-only read failed: ${e.message}")
+            }
+            return
+        }
+        queriesThisSession++
 
         // One-time network connectivity test
         if (!networkTestDone) {
