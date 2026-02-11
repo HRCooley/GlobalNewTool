@@ -33,13 +33,19 @@ class GdeltDataSource @Inject constructor(
     ): List<GdeltArticleWithLocation> = coroutineScope {
         val results = mutableListOf<GdeltArticleWithLocation>()
         val batches = regions.chunked(Constants.GDELT_BATCH_SIZE)
+        var rateLimited = false
 
         for (batch in batches) {
+            if (rateLimited) {
+                Log.w("GlobeNews", "GDELT: skipping remaining regions — rate limited")
+                break
+            }
             val deferred = batch.map { region ->
                 async {
+                    if (rateLimited) return@async emptyList()
                     try {
                         val query = buildQuery(region, category)
-                        Log.d("GlobeNews", "GDELT: query URL = ${Constants.GDELT_BASE_URL}doc?query=$query&mode=artlist&maxrecords=$maxRecords&timespan=$timespan&format=json")
+                        Log.d("GlobeNews", "GDELT: query for ${region.name}")
                         val response = api.search(
                             query = query,
                             maxRecords = maxRecords,
@@ -54,12 +60,17 @@ class GdeltDataSource @Inject constructor(
                             GdeltArticleWithLocation(article, region)
                         }
                     } catch (e: HttpException) {
-                        val isRateLimited = e.code() == 429
-                        Log.e("GlobeNews", "GDELT: ERROR for ${region.name}: HTTP ${e.code()}: ${e.message}")
+                        val isRateLimit = e.code() == 429
+                        if (isRateLimit) {
+                            rateLimited = true
+                            Log.w("GlobeNews", "GDELT: 429 rate limited at region ${region.name}, stopping")
+                        } else {
+                            Log.e("GlobeNews", "GDELT: ERROR for ${region.name}: HTTP ${e.code()}")
+                        }
                         onRegionResult?.invoke(
                             GdeltRegionResult(
                                 region.name, 0, succeeded = false,
-                                rateLimited = isRateLimited,
+                                rateLimited = isRateLimit,
                                 error = "HTTP ${e.code()}"
                             )
                         )
@@ -77,11 +88,16 @@ class GdeltDataSource @Inject constructor(
                 }
             }
             results.addAll(deferred.awaitAll().flatten())
-            if (batches.indexOf(batch) < batches.lastIndex) {
+            if (!rateLimited && batches.indexOf(batch) < batches.lastIndex) {
                 delay(Constants.GDELT_BATCH_DELAY_MS)
             }
         }
-        results
+        val capped = results.take(Constants.GDELT_MAX_STORIES)
+        if (capped.size < results.size) {
+            Log.w("GlobeNews", "GDELT: capped from ${results.size} to ${capped.size} articles")
+        }
+        Log.d("GlobeNews", "GDELT: ${capped.size} articles from ${regions.size} regions (rateLimited=$rateLimited)")
+        capped
     }
 
     suspend fun fetchNearby(
