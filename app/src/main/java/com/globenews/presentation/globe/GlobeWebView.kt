@@ -83,11 +83,10 @@ fun WebView.updateMarkers(stories: List<NewsStory>) {
     }
     lastSentStoryIds = currentIds
 
-    // Clear existing markers before adding new ones
-    evaluateJavascript("clearMarkers()", null)
-
     if (stories.isEmpty()) {
-        Log.d("GlobeNews", "WEBVIEW: stories list is empty, returning after clearMarkers")
+        // Only clear when going to zero stories
+        evaluateJavascript("clearMarkers()", null)
+        Log.d("GlobeNews", "WEBVIEW: stories list is empty, cleared markers")
         return
     }
 

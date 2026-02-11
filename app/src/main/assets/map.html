@@ -133,8 +133,15 @@
         function addMarkers(jsonArrayString) {
             try {
                 var stories = JSON.parse(jsonArrayString);
+                var newIds = {};
+
+                // Add only NEW markers (skip existing)
                 for (var i = 0; i < stories.length; i++) {
                     var story = stories[i];
+                    newIds[story.id] = true;
+
+                    if (markerMap[story.id]) continue; // Already on map
+
                     var color = CATEGORY_COLORS[story.category] || DEFAULT_COLOR;
 
                     var radius = 5;
@@ -166,6 +173,16 @@
 
                     markerMap[story.id] = marker;
                     clusterGroup.addLayer(marker);
+                }
+
+                // Remove markers no longer in the list
+                var idsToRemove = [];
+                for (var id in markerMap) {
+                    if (!newIds[id]) idsToRemove.push(id);
+                }
+                for (var j = 0; j < idsToRemove.length; j++) {
+                    clusterGroup.removeLayer(markerMap[idsToRemove[j]]);
+                    delete markerMap[idsToRemove[j]];
                 }
             } catch(e) {
                 console.error('addMarkers error:', e);
