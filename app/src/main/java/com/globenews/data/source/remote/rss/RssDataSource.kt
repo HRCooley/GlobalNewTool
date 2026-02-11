@@ -2,6 +2,7 @@ package com.globenews.data.source.remote.rss
 
 import android.content.Context
 import android.util.Log
+import com.globenews.core.common.Constants
 import com.globenews.data.source.local.ManagedFeed
 import com.globenews.data.source.local.ManagedFeedDao
 import com.squareup.moshi.Moshi
@@ -47,11 +48,11 @@ class RssDataSource @Inject constructor(
 
     private var feedConfigs: List<RssFeedConfig>? = null
 
-    // Dedicated client with 10s timeout for RSS feeds
+    // Dedicated client with tight timeouts for RSS feeds
     private val rssClient: OkHttpClient by lazy {
         client.newBuilder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
             .build()
     }
 
@@ -108,7 +109,8 @@ class RssDataSource @Inject constructor(
         onFeedResult: ((RssFeedResult) -> Unit)? = null,
         onTotalKnown: ((Int) -> Unit)? = null
     ): List<RssItem> {
-        var feeds = managedFeedDao.getEnabledFeeds().filter { it.consecutiveFailures < 10 }
+        var feeds = managedFeedDao.getEnabledFeeds()
+            .filter { it.consecutiveFailures < Constants.RSS_SKIP_AFTER_FAILURES }
 
         // On first launch, feed import runs async and may not be done yet.
         // Wait up to 10s for feeds to appear in Room.
@@ -116,7 +118,8 @@ class RssDataSource @Inject constructor(
             Log.d("GlobeNews", "RSS: 0 feeds in DB, waiting for import...")
             for (attempt in 1..10) {
                 delay(1000)
-                feeds = managedFeedDao.getEnabledFeeds().filter { it.consecutiveFailures < 10 }
+                feeds = managedFeedDao.getEnabledFeeds()
+                    .filter { it.consecutiveFailures < Constants.RSS_SKIP_AFTER_FAILURES }
                 if (feeds.isNotEmpty()) {
                     Log.d("GlobeNews", "RSS: import ready after ${attempt}s — ${feeds.size} feeds")
                     break
@@ -137,13 +140,14 @@ class RssDataSource @Inject constructor(
         var successCount = 0
         var failCount = 0
 
-        val batches = feeds.chunked(10)
+        val batches = feeds.chunked(Constants.RSS_BATCH_SIZE)
         batches.forEachIndexed { batchIdx, batch ->
             coroutineScope {
                 batch.map { feed ->
                     async {
                         try {
                             val items = fetchManagedFeed(feed)
+                                .take(Constants.RSS_MAX_ITEMS_PER_FEED)
                             managedFeedDao.recordSuccess(feed.id, System.currentTimeMillis())
                             allItems.addAll(items)
                             successCount++
@@ -169,12 +173,16 @@ class RssDataSource @Inject constructor(
                 }.awaitAll()
             }
             if (batchIdx < batches.size - 1) {
-                delay(200)
+                delay(Constants.RSS_BATCH_DELAY_MS)
             }
         }
 
-        Log.d("GlobeNews", "RSS: Done. $successCount OK, $failCount failed, ${allItems.size} total items from ${feeds.size} feeds")
-        return allItems
+        val capped = allItems.take(Constants.RSS_MAX_STORIES)
+        if (capped.size < allItems.size) {
+            Log.w("GlobeNews", "RSS: capped from ${allItems.size} to ${capped.size} items")
+        }
+        Log.d("GlobeNews", "RSS: Done. $successCount OK, $failCount failed, ${capped.size} items (from ${allItems.size}) from ${feeds.size} feeds")
+        return capped
     }
 
     private suspend fun fetchManagedFeed(feed: ManagedFeed): List<RssItem> = withContext(Dispatchers.IO) {
@@ -232,7 +240,7 @@ class RssDataSource @Inject constructor(
             }
             val results = mutableListOf<RssItem>()
 
-            for (i in 0 until minOf(items.length, 30)) {
+            for (i in 0 until minOf(items.length, Constants.RSS_MAX_ITEMS_PER_FEED)) {
                 val node = items.item(i)
                 val children = node.childNodes
                 var title = ""

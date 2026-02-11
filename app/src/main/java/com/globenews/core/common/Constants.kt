@@ -15,6 +15,12 @@ object Constants {
     const val GDELT_BATCH_DELAY_MS = 2000L
     const val GDELT_MAX_STORIES = 500
 
+    const val RSS_BATCH_SIZE = 5
+    const val RSS_BATCH_DELAY_MS = 1000L
+    const val RSS_MAX_ITEMS_PER_FEED = 15
+    const val RSS_MAX_STORIES = 500
+    const val RSS_SKIP_AFTER_FAILURES = 5
+
     const val MAX_MARKERS_WORLD = 1000
     const val MAX_MARKERS_REGION = 750
     const val MAX_MARKERS_LOCAL = 500
