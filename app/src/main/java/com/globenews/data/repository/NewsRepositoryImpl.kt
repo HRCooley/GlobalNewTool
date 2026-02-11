@@ -8,6 +8,7 @@ import com.globenews.core.common.titleWordOverlap
 import com.globenews.data.mapper.StoryMappers
 import com.globenews.data.source.local.FallbackDataSource
 import com.globenews.data.source.local.ManagedFeedDao
+import com.globenews.data.source.local.StoryDao
 import com.globenews.data.source.remote.gdelt.GdeltDataSource
 import com.globenews.data.source.remote.gnews.GNewsDataSource
 import com.globenews.data.source.remote.googlenews.GoogleNewsDataSource
@@ -43,6 +44,7 @@ class NewsRepositoryImpl @Inject constructor(
     private val gNewsDataSource: GNewsDataSource,
     private val fallbackDataSource: FallbackDataSource,
     private val managedFeedDao: ManagedFeedDao,
+    private val storyDao: StoryDao,
     private val okHttpClient: OkHttpClient
 ) : NewsRepository {
 
@@ -98,21 +100,43 @@ class NewsRepositoryImpl @Inject constructor(
     override suspend fun refreshStories(view: GlobeView, category: NewsCategory) {
         Log.d("GlobeNews", "REPO: refreshStories called, zoom=${view.zoom}, category=$category")
 
-        // Step 1: Show cached/fallback instantly
+        // Step 1: Show Room cache → fallback instantly
         val current = storiesFlow.value
         val hasRealData = current is Result.Success && current.data.isNotEmpty()
         if (!hasRealData) {
+            // Try Room cache first (stories less than 24h old)
             try {
-                val fallback = fallbackDataSource.loadFallbackStories().map { StoryMappers.fromFallback(it) }
-                Log.d(TAG, "REPO: emitting ${fallback.size} fallback stories (no existing data)")
-                if (fallback.isNotEmpty()) {
-                    storiesFlow.value = Result.Success(fallback)
+                val bounds = view.bounds
+                val maxAge = System.currentTimeMillis() - (24 * 60 * 60 * 1000L)
+                val cached = if (bounds != null) {
+                    storyDao.getInBounds(bounds.north, bounds.south, bounds.east, bounds.west, maxAge)
                 } else {
-                    storiesFlow.value = Result.Loading
+                    storyDao.getInBounds(90.0, -90.0, 180.0, -180.0, maxAge)
+                }
+                if (cached.isNotEmpty()) {
+                    val cachedStories = cached.map { StoryMappers.fromEntity(it) }
+                    Log.d(TAG, "REPO: emitting ${cachedStories.size} Room-cached stories")
+                    storiesFlow.value = Result.Success(cachedStories)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "REPO: fallback load failed: ${e.message}")
-                storiesFlow.value = Result.Loading
+                Log.e(TAG, "REPO: Room cache read failed: ${e.message}")
+            }
+
+            // Fallback if still no data
+            val afterCache = storiesFlow.value
+            if (afterCache !is Result.Success || afterCache.data.isEmpty()) {
+                try {
+                    val fallback = fallbackDataSource.loadFallbackStories().map { StoryMappers.fromFallback(it) }
+                    Log.d(TAG, "REPO: emitting ${fallback.size} fallback stories (no existing data)")
+                    if (fallback.isNotEmpty()) {
+                        storiesFlow.value = Result.Success(fallback)
+                    } else {
+                        storiesFlow.value = Result.Loading
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "REPO: fallback load failed: ${e.message}")
+                    storiesFlow.value = Result.Loading
+                }
             }
         } else {
             Log.d(TAG, "REPO: skipping fallback, already have ${(current as Result.Success).data.size} stories")
@@ -323,10 +347,16 @@ class NewsRepositoryImpl @Inject constructor(
                     pipelineSummary = "LIVE — ${deduped.size} stories"
                 )
 
-                // Cache for future use
+                // Cache in memory + Room
                 globalGridCache = deduped
                 globalGridCacheTime = Instant.now()
                 globalGridCacheCategory = category
+                try {
+                    storyDao.upsertAll(deduped.map { StoryMappers.toEntity(it) })
+                    Log.d(TAG, "REPO: upserted ${deduped.size} stories into Room cache")
+                } catch (e: Exception) {
+                    Log.e(TAG, "REPO: Room cache write failed: ${e.message}")
+                }
             } else {
                 Log.e("GlobeNews", ">>> LIVE DATA FAILED: 0 network stories")
                 _diagnostics.value = _diagnostics.value.copy(
