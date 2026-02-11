@@ -124,11 +124,11 @@ class GlobeViewModel @Inject constructor(
 
         observeStories()
 
-        // Debounce refresh: cancel previous, wait 300ms
+        // Debounce refresh: cancel previous, wait 800ms for camera to settle
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
-            delay(300)
-            loadStories()
+            delay(800)
+            loadStories(force = true)
         }
     }
 
