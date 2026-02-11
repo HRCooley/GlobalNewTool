@@ -70,8 +70,19 @@ fun GlobeWebView(
     )
 }
 
+private var lastSentStoryIds: Set<String> = emptySet()
+
 fun WebView.updateMarkers(stories: List<NewsStory>) {
     Log.d("GlobeNews", "WEBVIEW: updateMarkers called with ${stories.size} stories")
+
+    // Skip if story IDs haven't changed — avoids expensive clear+redraw
+    val currentIds = stories.map { it.id }.toSet()
+    if (currentIds == lastSentStoryIds) {
+        Log.d("GlobeNews", "WEBVIEW: skipping — story IDs unchanged (${currentIds.size})")
+        return
+    }
+    lastSentStoryIds = currentIds
+
     // Clear existing markers before adding new ones
     evaluateJavascript("clearMarkers()", null)
 
