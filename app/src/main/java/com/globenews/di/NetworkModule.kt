@@ -55,7 +55,7 @@ object NetworkModule {
         return Retrofit.Builder()
             .baseUrl(Constants.GDELT_BASE_URL)
             .client(gdeltClient)
-            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .addConverterFactory(MoshiConverterFactory.create(moshi).asLenient())
             .build()
             .create(GdeltApi::class.java)
     }
