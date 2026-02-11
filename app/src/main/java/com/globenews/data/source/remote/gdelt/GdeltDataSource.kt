@@ -4,6 +4,7 @@ import android.util.Log
 import com.globenews.core.common.Constants
 import com.globenews.domain.model.NewsCategory
 import com.globenews.domain.model.QueryRegion
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -98,6 +99,88 @@ class GdeltDataSource @Inject constructor(
         }
         Log.d("GlobeNews", "GDELT: ${capped.size} articles from ${regions.size} regions (rateLimited=$rateLimited)")
         capped
+    }
+
+    /**
+     * Fast viewport query — single GDELT call for what the user is looking at.
+     * At world zoom (< 3.0) returns empty — caller should use quick-world or grid instead.
+     */
+    suspend fun fetchForViewport(
+        centerLat: Double,
+        centerLon: Double,
+        zoom: Double,
+        category: NewsCategory,
+        onRegionResult: ((GdeltRegionResult) -> Unit)? = null
+    ): List<GdeltArticleWithLocation> {
+        if (zoom < 3.0) return emptyList() // Too wide for viewport query
+
+        val maxRecords = when {
+            zoom < 5.0 -> 150
+            zoom < 8.0 -> 100
+            else -> 75
+        }
+        val timespan = if (zoom < 8.0) "24h" else "7d"
+
+        // Use country codes from nearest grid region for better GDELT results
+        val closestRegion = findClosestRegion(centerLat, centerLon)
+        val codes = closestRegion?.countryCodes ?: emptyList()
+        val regionName = closestRegion?.name ?: "viewport"
+        val region = QueryRegion(regionName, centerLat, centerLon, 3000, codes)
+
+        return try {
+            val query = buildQuery(region, category)
+            Log.d("GlobeNews", "GDELT viewport: $query max=$maxRecords ts=$timespan")
+            val response = api.search(query = query, maxRecords = maxRecords, timespan = timespan)
+            val articles = response.articles ?: emptyList()
+            Log.d("GlobeNews", "GDELT viewport: ${articles.size} articles")
+            onRegionResult?.invoke(
+                GdeltRegionResult(regionName, articles.size, succeeded = true)
+            )
+            articles.map { GdeltArticleWithLocation(it, region) }
+                .take(Constants.GDELT_MAX_STORIES)
+        } catch (e: HttpException) {
+            Log.w("GlobeNews", "GDELT viewport: HTTP ${e.code()}")
+            onRegionResult?.invoke(
+                GdeltRegionResult(regionName, 0, succeeded = false,
+                    rateLimited = e.code() == 429, error = "HTTP ${e.code()}")
+            )
+            emptyList()
+        } catch (e: Exception) {
+            Log.w("GlobeNews", "GDELT viewport failed: ${e.message}")
+            onRegionResult?.invoke(
+                GdeltRegionResult(regionName, 0, succeeded = false,
+                    error = "${e.javaClass.simpleName}: ${e.message}")
+            )
+            emptyList()
+        }
+    }
+
+    /**
+     * Slow background fill: iterates all 27 grid regions one at a time with 3s delays.
+     * Never rate-limits. Calls onRegionComplete per region so the caller can merge incrementally.
+     */
+    suspend fun backgroundFillGrid(
+        category: NewsCategory,
+        onRegionComplete: (String, List<GdeltArticleWithLocation>) -> Unit
+    ) {
+        val grid = com.globenews.domain.model.GLOBAL_GRID
+        for (region in grid) {
+            try {
+                val query = buildQuery(region, category)
+                val response = api.search(query = query, maxRecords = 50, timespan = "24h")
+                val articles = response.articles ?: emptyList()
+                if (articles.isNotEmpty()) {
+                    val mapped = articles.map { GdeltArticleWithLocation(it, region) }
+                    Log.d("GlobeNews", "GDELT bg: ${region.name} → ${articles.size} articles")
+                    onRegionComplete(region.name, mapped)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("GlobeNews", "GDELT bg: ${region.name} failed — ${e.message}")
+            }
+            delay(3000) // 3s between regions — never triggers rate limits
+        }
     }
 
     suspend fun fetchNearby(
