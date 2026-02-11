@@ -89,12 +89,25 @@ class RssDataSource @Inject constructor(
         results.awaitAll().flatten()
     }
 
+    /** Per-feed result for diagnostics */
+    data class RssFeedResult(
+        val feedName: String,
+        val itemCount: Int,
+        val succeeded: Boolean,
+        val error: String? = null
+    )
+
     /**
      * Fetch all enabled managed feeds from Room in batches of 10 with 200ms delay.
      * Records success/failure per feed for health tracking.
      * Skips feeds with 10+ consecutive failures.
+     * @param onFeedResult called after each feed completes, for real-time diagnostics
+     * @param onTotalKnown called once with total feed count before fetching starts
      */
-    suspend fun fetchAllManagedFeeds(): List<RssItem> {
+    suspend fun fetchAllManagedFeeds(
+        onFeedResult: ((RssFeedResult) -> Unit)? = null,
+        onTotalKnown: ((Int) -> Unit)? = null
+    ): List<RssItem> {
         var feeds = managedFeedDao.getEnabledFeeds().filter { it.consecutiveFailures < 10 }
 
         // On first launch, feed import runs async and may not be done yet.
@@ -115,6 +128,8 @@ class RssDataSource @Inject constructor(
             }
         }
 
+        onTotalKnown?.invoke(feeds.size)
+
         val brokenCount = managedFeedDao.getBrokenCount()
         Log.d("GlobeNews", "RSS: fetching ${feeds.size} enabled managed feeds ($brokenCount broken)")
 
@@ -132,6 +147,9 @@ class RssDataSource @Inject constructor(
                             managedFeedDao.recordSuccess(feed.id, System.currentTimeMillis())
                             allItems.addAll(items)
                             successCount++
+                            onFeedResult?.invoke(
+                                RssFeedResult(feed.name, items.size, succeeded = true)
+                            )
                         } catch (e: Exception) {
                             managedFeedDao.recordFailure(
                                 feed.id,
@@ -140,6 +158,12 @@ class RssDataSource @Inject constructor(
                             )
                             failCount++
                             Log.w("GlobeNews", "RSS FAIL: ${feed.name} — ${e.message}")
+                            onFeedResult?.invoke(
+                                RssFeedResult(
+                                    feed.name, 0, succeeded = false,
+                                    error = e.message ?: "Unknown error"
+                                )
+                            )
                         }
                     }
                 }.awaitAll()

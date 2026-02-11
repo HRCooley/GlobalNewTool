@@ -158,21 +158,51 @@ class NewsRepositoryImpl @Inject constructor(
                     var googleCount = 0
 
                     // GDELT — wrapped so RSS still runs if GDELT fails
-                    _diagnostics.value = _diagnostics.value.copy(gdeltStatus = "Fetching ${GLOBAL_GRID.size} regions...")
+                    _diagnostics.value = _diagnostics.value.copy(
+                        gdeltStatus = "Fetching ${GLOBAL_GRID.size} regions...",
+                        gdeltRegionsTotal = GLOBAL_GRID.size,
+                        gdeltRegionsSucceeded = 0,
+                        gdeltRegionsFailed = 0,
+                        gdeltRegionsRateLimited = 0
+                    )
                     try {
                         Log.d(TAG, "REPO: fetching GDELT for ${GLOBAL_GRID.size} global regions...")
+                        var regionsOk = 0
+                        var regionsFail = 0
+                        var regionsRateLimit = 0
                         val gdeltResults = gdeltDataSource.fetchForRegions(
                             regions = GLOBAL_GRID,
                             category = category,
                             maxRecords = 75,
-                            timespan = "24h"
+                            timespan = "24h",
+                            onRegionResult = { result ->
+                                if (result.succeeded) regionsOk++ else regionsFail++
+                                if (result.rateLimited) regionsRateLimit++
+                                val logResult = if (result.succeeded) "OK (${result.articleCount} articles)"
+                                    else result.error ?: "Failed"
+                                val rateLimitNote = if (regionsRateLimit > 0) " ($regionsRateLimit regions rate-limited)" else ""
+                                _diagnostics.value = _diagnostics.value
+                                    .addLog("GDELT", result.regionName, logResult)
+                                    .copy(
+                                        gdeltRegionsSucceeded = regionsOk,
+                                        gdeltRegionsFailed = regionsFail,
+                                        gdeltRegionsRateLimited = regionsRateLimit,
+                                        gdeltStatus = "$regionsOk/${GLOBAL_GRID.size} regions done ($regionsFail failed)$rateLimitNote"
+                                    )
+                            }
                         )
                         Log.d(TAG, "REPO: GDELT returned ${gdeltResults.size} raw articles")
                         val gdeltStories = gdeltResults.mapNotNull { StoryMappers.fromGdelt(it) }
                         gdeltCount = gdeltStories.size
                         Log.d(TAG, "REPO: GDELT mapped to $gdeltCount stories")
                         stories.addAll(gdeltStories)
-                        _diagnostics.value = _diagnostics.value.copy(gdeltStatus = "$gdeltCount stories from ${gdeltResults.size} articles")
+                        val rateLimitNote = if (regionsRateLimit > 0) ". $regionsRateLimit regions rate-limited" else ""
+                        _diagnostics.value = _diagnostics.value.copy(
+                            gdeltStatus = "$gdeltCount stories — $regionsOk/${GLOBAL_GRID.size} regions OK, $regionsFail failed$rateLimitNote",
+                            gdeltRegionsSucceeded = regionsOk,
+                            gdeltRegionsFailed = regionsFail,
+                            gdeltRegionsRateLimited = regionsRateLimit
+                        )
                     } catch (e: Exception) {
                         Log.e(TAG, "REPO: GDELT global fetch failed: ${e.message}")
                         _diagnostics.value = _diagnostics.value.copy(gdeltStatus = "FAILED: ${e.message}")
@@ -366,29 +396,67 @@ class NewsRepositoryImpl @Inject constructor(
         }
     }
 
-    /** Get RSS stories from cache or fetch fresh if stale */
+    /** Get RSS stories from cache or fetch fresh if stale, with real-time diagnostics */
     private suspend fun getCachedRssStories(): List<NewsStory> {
         val cacheValid = Duration.between(rssCacheTime, Instant.now()).toMinutes() < Constants.RSS_REFRESH_MINUTES
             && rssCache.isNotEmpty()
 
         if (cacheValid) {
             Log.d(TAG, "REPO: using cached RSS (${rssCache.size} stories, age=${Duration.between(rssCacheTime, Instant.now()).toMinutes()}m)")
+            _diagnostics.value = _diagnostics.value.copy(
+                rssStatus = "${rssCache.size} stories (cached)"
+            )
             return rssCache
         }
 
         return try {
-            val rssItems = rssDataSource.fetchAllManagedFeeds()
+            var feedsOk = 0
+            var feedsFail = 0
+            var feedsTotal = 0
+            val rssItems = rssDataSource.fetchAllManagedFeeds(
+                onTotalKnown = { total ->
+                    feedsTotal = total
+                    _diagnostics.value = _diagnostics.value.copy(
+                        rssFeedsTotal = total,
+                        rssFeedsSucceeded = 0,
+                        rssFeedsFailed = 0,
+                        rssFeedsStillFetching = total,
+                        rssStatus = "0 succeeded, 0 failed, $total still fetching"
+                    )
+                },
+                onFeedResult = { result ->
+                    if (result.succeeded) feedsOk++ else feedsFail++
+                    val stillFetching = feedsTotal - feedsOk - feedsFail
+                    val logResult = if (result.succeeded) "OK (${result.itemCount} items)"
+                        else result.error ?: "Failed"
+                    _diagnostics.value = _diagnostics.value
+                        .addLog("RSS", result.feedName, logResult)
+                        .copy(
+                            rssFeedsSucceeded = feedsOk,
+                            rssFeedsFailed = feedsFail,
+                            rssFeedsStillFetching = stillFetching,
+                            rssStatus = "$feedsOk succeeded, $feedsFail failed, $stillFetching still fetching"
+                        )
+                }
+            )
             val rssStories = rssItems.map { StoryMappers.fromRss(it) }
             Log.d(TAG, "REPO: fresh RSS fetch returned ${rssStories.size} stories")
             if (rssStories.isNotEmpty()) {
                 rssCache = rssStories
                 rssCacheTime = Instant.now()
             }
+            _diagnostics.value = _diagnostics.value.copy(
+                rssStatus = "${rssStories.size} stories — $feedsOk/$feedsTotal feeds OK, $feedsFail failed",
+                rssFeedsStillFetching = 0
+            )
             rssStories
         } catch (e: kotlin.coroutines.cancellation.CancellationException) {
             throw e // Don't swallow cancellation
         } catch (e: Exception) {
             Log.e(TAG, "REPO: managed RSS fetch failed: ${e.message}")
+            _diagnostics.value = _diagnostics.value.copy(
+                rssStatus = "FAILED: ${e.message}"
+            )
             rssCache // Return stale cache if available
         }
     }

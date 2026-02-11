@@ -8,6 +8,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import retrofit2.HttpException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -19,11 +20,16 @@ class GdeltDataSource @Inject constructor(
         private const val TAG = "GdeltDataSource"
     }
 
+    /**
+     * Fetch GDELT articles for all regions with per-region diagnostics.
+     * @param onRegionResult called after each region completes, for real-time diagnostics
+     */
     suspend fun fetchForRegions(
         regions: List<QueryRegion>,
         category: NewsCategory,
         maxRecords: Int = 75,
-        timespan: String = "24h"
+        timespan: String = "24h",
+        onRegionResult: ((GdeltRegionResult) -> Unit)? = null
     ): List<GdeltArticleWithLocation> = coroutineScope {
         val results = mutableListOf<GdeltArticleWithLocation>()
         val batches = regions.chunked(Constants.GDELT_BATCH_SIZE)
@@ -41,11 +47,31 @@ class GdeltDataSource @Inject constructor(
                         )
                         val articles = response.articles ?: emptyList()
                         Log.d("GlobeNews", "GDELT: region ${region.name} returned ${articles.size} articles")
+                        onRegionResult?.invoke(
+                            GdeltRegionResult(region.name, articles.size, succeeded = true)
+                        )
                         articles.map { article ->
                             GdeltArticleWithLocation(article, region)
                         }
+                    } catch (e: HttpException) {
+                        val isRateLimited = e.code() == 429
+                        Log.e("GlobeNews", "GDELT: ERROR for ${region.name}: HTTP ${e.code()}: ${e.message}")
+                        onRegionResult?.invoke(
+                            GdeltRegionResult(
+                                region.name, 0, succeeded = false,
+                                rateLimited = isRateLimited,
+                                error = "HTTP ${e.code()}"
+                            )
+                        )
+                        emptyList()
                     } catch (e: Exception) {
                         Log.e("GlobeNews", "GDELT: ERROR for ${region.name}: ${e.javaClass.simpleName}: ${e.message}")
+                        onRegionResult?.invoke(
+                            GdeltRegionResult(
+                                region.name, 0, succeeded = false,
+                                error = "${e.javaClass.simpleName}: ${e.message}"
+                            )
+                        )
                         emptyList()
                     }
                 }
@@ -119,4 +145,13 @@ class GdeltDataSource @Inject constructor(
 data class GdeltArticleWithLocation(
     val article: GdeltArticle,
     val queryRegion: QueryRegion
+)
+
+/** Per-region fetch result for diagnostics */
+data class GdeltRegionResult(
+    val regionName: String,
+    val articleCount: Int,
+    val succeeded: Boolean,
+    val rateLimited: Boolean = false,
+    val error: String? = null
 )

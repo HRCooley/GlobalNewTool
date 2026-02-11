@@ -1,5 +1,6 @@
 package com.globenews.presentation.settings
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -7,8 +8,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -28,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,9 +42,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.globenews.data.source.local.CustomFeedEntity
+import com.globenews.domain.repository.DiagnosticLogEntry
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -88,11 +99,49 @@ fun SettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     DiagnosticRow("Network Test", diagnostics.networkTest)
-                    DiagnosticRow("GDELT", diagnostics.gdeltStatus)
-                    DiagnosticRow("RSS", diagnostics.rssStatus)
-                    DiagnosticRow("Live Total", diagnostics.liveTotal)
                     DiagnosticRow("Pipeline", diagnostics.pipelineSummary)
+                    DiagnosticRow("Live Total", diagnostics.liveTotal)
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                    // GDELT detail
+                    Text("GDELT", style = MaterialTheme.typography.titleSmall)
+                    DiagnosticRow("Status", diagnostics.gdeltStatus)
+                    if (diagnostics.gdeltRegionsTotal > 0) {
+                        DiagnosticRow(
+                            "Regions",
+                            "${diagnostics.gdeltRegionsSucceeded} succeeded, " +
+                                "${diagnostics.gdeltRegionsFailed} failed of ${diagnostics.gdeltRegionsTotal}"
+                        )
+                        if (diagnostics.gdeltRegionsRateLimited > 0) {
+                            Text(
+                                "${diagnostics.gdeltRegionsRateLimited} regions rate-limited (HTTP 429)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                    // RSS detail
+                    Text("RSS Feeds", style = MaterialTheme.typography.titleSmall)
+                    DiagnosticRow("Status", diagnostics.rssStatus)
+                    if (diagnostics.rssFeedsTotal > 0) {
+                        DiagnosticRow(
+                            "Feeds",
+                            "${diagnostics.rssFeedsSucceeded} succeeded, " +
+                                "${diagnostics.rssFeedsFailed} failed, " +
+                                "${diagnostics.rssFeedsStillFetching} still fetching"
+                        )
+                    }
                 }
+            }
+
+            // Scrollable diagnostics log
+            if (diagnostics.logEntries.isNotEmpty()) {
+                Text("Fetch Log (last ${diagnostics.logEntries.size})", style = MaterialTheme.typography.titleSmall)
+                DiagnosticLogPanel(entries = diagnostics.logEntries)
             }
 
             HorizontalDivider()
@@ -181,6 +230,44 @@ fun SettingsScreen(
                     "News sourced from GDELT, Google News, and curated RSS feeds worldwide.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticLogPanel(entries: List<DiagnosticLogEntry>) {
+    val listState = rememberLazyListState()
+    // Auto-scroll to bottom when new entries arrive
+    LaunchedEffect(entries.size) {
+        if (entries.isNotEmpty()) {
+            listState.animateScrollToItem(entries.lastIndex)
+        }
+    }
+    LazyColumn(
+        state = listState,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 240.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        items(entries) { entry ->
+            val tag = if (entry.source == "GDELT") "GDL" else "RSS"
+            Text(
+                text = "[$tag] ${entry.name}: ${entry.result}",
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    lineHeight = 14.sp
+                ),
+                color = if (entry.result.startsWith("OK"))
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                else
+                    MaterialTheme.colorScheme.error,
+                maxLines = 1
             )
         }
     }
