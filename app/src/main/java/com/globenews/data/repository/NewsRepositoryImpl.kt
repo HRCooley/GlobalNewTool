@@ -210,8 +210,11 @@ class NewsRepositoryImpl @Inject constructor(
 
                     // Push GDELT results to map immediately — don't wait for slow RSS
                     if (stories.isNotEmpty()) {
-                        storiesFlow.value = Result.Success(deduplicateStories(stories))
-                        Log.d(TAG, "REPO: interim update — ${stories.size} GDELT stories pushed to map")
+                        val interim = deduplicateStories(stories)
+                            .sortedByDescending { it.publishedAt }
+                            .take(Constants.MAX_TOTAL_STORIES)
+                        storiesFlow.value = Result.Success(interim)
+                        Log.d(TAG, "REPO: interim update — ${interim.size} GDELT stories pushed to map")
                     }
 
                     // Managed RSS feeds (297 bundled + user custom) — cached
@@ -329,8 +332,14 @@ class NewsRepositoryImpl @Inject constructor(
                 logBrokenFeeds()
             }
 
-            // Deduplicate
-            val deduped = deduplicateStories(stories)
+            // Deduplicate and cap
+            val dedupedRaw = deduplicateStories(stories)
+            val deduped = if (dedupedRaw.size > Constants.MAX_TOTAL_STORIES) {
+                Log.w("GlobeNews", "REPO: capping stories from ${dedupedRaw.size} to ${Constants.MAX_TOTAL_STORIES}")
+                dedupedRaw.sortedByDescending { it.publishedAt }.take(Constants.MAX_TOTAL_STORIES)
+            } else {
+                dedupedRaw
+            }
             Log.d("GlobeNews", "REPO: after dedup: ${deduped.size} stories (from ${stories.size})")
 
             // Only replace fallback if we got real network results

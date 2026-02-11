@@ -31,6 +31,8 @@ object Constants {
     const val ZOOM_LOCAL_THRESHOLD = 8.0
     const val ZOOM_HYSTERESIS = 0.3
 
+    const val MAX_TOTAL_STORIES = 1000
+
     const val DEDUP_TITLE_OVERLAP_THRESHOLD = 0.8
     const val DEDUP_TIME_WINDOW_HOURS = 12L
 }
