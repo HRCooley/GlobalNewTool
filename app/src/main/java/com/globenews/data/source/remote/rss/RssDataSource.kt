@@ -196,9 +196,14 @@ class RssDataSource @Inject constructor(
     ): List<RssItem> {
         val intl = managedFeedDao.getInternationalFeeds()
         val local = managedFeedDao.getFeedsInBounds(north, south, east, west)
-        val feeds = (intl + local).distinctBy { it.url }.take(30)
+        val thirtyMinutesAgo = System.currentTimeMillis() - (30 * 60 * 1000L)
+        val allCandidates = (intl + local).distinctBy { it.url }
+        val feeds = allCandidates
+            .filter { it.lastFetchAt == null || it.lastFetchAt < thirtyMinutesAgo }
+            .take(30)
+        val skipped = allCandidates.size - feeds.size
 
-        Log.d("GlobeNews", "RSS viewport: ${feeds.size} feeds (${intl.size} intl + ${local.size} local)")
+        Log.d("GlobeNews", "RSS viewport: ${feeds.size} feeds (skipped $skipped recently fetched, ${intl.size} intl + ${local.size} local)")
         if (feeds.isEmpty()) return emptyList()
 
         onTotalKnown?.invoke(feeds.size)

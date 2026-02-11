@@ -33,7 +33,7 @@ data class DiagnosticInfo(
     // Cache
     val cacheStatus: String = "Not loaded",
     val queriesUsed: Int = 0,
-    val queriesMax: Int = 40,
+    val queriesMax: Int = 150,
     // Scrollable log (last 50 entries)
     val logEntries: List<DiagnosticLogEntry> = emptyList()
 ) {
@@ -47,6 +47,7 @@ data class DiagnosticInfo(
 interface NewsRepository {
     fun getStoriesForView(view: GlobeView, category: NewsCategory): Flow<Result<List<NewsStory>>>
     suspend fun refreshStories(view: GlobeView, category: NewsCategory)
+    suspend fun backgroundFillGlobalGrid(category: NewsCategory)
     suspend fun searchStories(query: String): Result<List<NewsStory>>
     suspend fun bookmarkStory(storyId: String, bookmarked: Boolean)
     fun getBookmarkedStories(): Flow<List<NewsStory>>

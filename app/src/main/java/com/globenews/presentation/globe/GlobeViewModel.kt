@@ -9,6 +9,7 @@ import com.globenews.domain.model.GlobeView
 import com.globenews.domain.model.NewsCategory
 import com.globenews.domain.model.NewsStory
 import com.globenews.data.source.local.ManagedFeedDao
+import com.globenews.domain.usecase.BackgroundFillUseCase
 import com.globenews.domain.usecase.GetStoriesForViewUseCase
 import com.globenews.domain.usecase.RefreshStoriesUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -41,6 +42,7 @@ data class GlobeUiState(
 class GlobeViewModel @Inject constructor(
     private val getStoriesForView: GetStoriesForViewUseCase,
     private val refreshStories: RefreshStoriesUseCase,
+    private val backgroundFill: BackgroundFillUseCase,
     managedFeedDao: ManagedFeedDao
 ) : ViewModel() {
 
@@ -53,6 +55,8 @@ class GlobeViewModel @Inject constructor(
     private var observeJob: Job? = null
     private var refreshJob: Job? = null
     private var fetchJob: Job? = null
+    private var backgroundJob: Job? = null
+    private var backgroundFillStarted = false
     private var currentZoomTier: ZoomTier = ZoomTier.WORLD
 
     init {
@@ -102,11 +106,14 @@ class GlobeViewModel @Inject constructor(
             return
         }
         fetchJob?.cancel()
+        // Do NOT cancel backgroundJob — it runs independently
         fetchJob = viewModelScope.launch {
             val state = _uiState.value
             Log.d("GlobeNews", "VIEWMODEL: loadStories called, zoom=${state.currentView.zoom}, category=${state.selectedCategory}")
             refreshStories(state.currentView, state.selectedCategory)
             Log.d("GlobeNews", "VIEWMODEL: refreshStories completed")
+            // Start background fill once after first successful fetch
+            startBackgroundFillIfNeeded(state.selectedCategory)
         }
     }
 
@@ -150,6 +157,16 @@ class GlobeViewModel @Inject constructor(
                 zoom < Constants.ZOOM_LOCAL_THRESHOLD - h -> ZoomTier.CONTINENTAL
                 else -> ZoomTier.LOCAL
             }
+        }
+    }
+
+    private fun startBackgroundFillIfNeeded(category: NewsCategory) {
+        if (backgroundFillStarted) return
+        backgroundFillStarted = true
+        backgroundJob = viewModelScope.launch {
+            Log.d("GlobeNews", "VIEWMODEL: starting background grid fill")
+            backgroundFill(category)
+            Log.d("GlobeNews", "VIEWMODEL: background grid fill completed")
         }
     }
 

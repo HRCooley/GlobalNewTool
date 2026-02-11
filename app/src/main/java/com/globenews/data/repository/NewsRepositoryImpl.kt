@@ -67,7 +67,7 @@ class NewsRepositoryImpl @Inject constructor(
     private var networkTestDone = false
     private var rssCacheTime: Instant = Instant.EPOCH
     private var queriesThisSession = 0
-    private val MAX_QUERIES = 40
+    private val MAX_QUERIES = 150
 
     override fun getStoriesForView(
         view: GlobeView,
@@ -414,39 +414,7 @@ class NewsRepositoryImpl @Inject constructor(
                 )
             }
 
-            // ── STEP 6: Background grid fill (world zoom only, non-blocking) ──
-            if (view.zoom < Constants.ZOOM_WORLD_THRESHOLD && deduped.isNotEmpty()) {
-                Log.d(TAG, "REPO: starting background grid fill")
-                _diagnostics.value = _diagnostics.value.copy(
-                    pipelineSummary = "LIVE — ${deduped.size} stories. Background fill running..."
-                )
-                try {
-                    gdeltDataSource.backgroundFillGrid(category) { regionName, regionArticles ->
-                        val regionStories = regionArticles.mapNotNull { StoryMappers.fromGdelt(it) }
-                        val currentData = (storiesFlow.value as? Result.Success)?.data ?: emptyList()
-                        val merged = deduplicateStories(currentData + regionStories)
-                            .sortedByDescending { it.publishedAt }
-                            .take(Constants.MAX_TOTAL_STORIES)
-                        if (merged.size > currentData.size) {
-                            storiesFlow.value = Result.Success(merged)
-                            _diagnostics.value = _diagnostics.value
-                                .addLog("GDELT", regionName, "bg +${merged.size - currentData.size}")
-                                .copy(
-                                    liveTotal = "${merged.size} live stories (filling...)",
-                                    pipelineSummary = "LIVE — ${merged.size} stories. Background fill..."
-                                )
-                        }
-                    }
-                    val finalCount = (storiesFlow.value as? Result.Success)?.data?.size ?: 0
-                    _diagnostics.value = _diagnostics.value.copy(
-                        pipelineSummary = "LIVE — $finalCount stories (fill complete)"
-                    )
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Log.w(TAG, "REPO: background fill failed: ${e.message}")
-                }
-            }
+            // Background fill is now launched separately via backgroundFillGlobalGrid()
 
             logBrokenFeeds()
         } catch (e: CancellationException) {
@@ -473,6 +441,48 @@ class NewsRepositoryImpl @Inject constructor(
             Result.Success(stories)
         } catch (e: Exception) {
             Result.Error("Search failed: ${e.message}", e)
+        }
+    }
+
+    override suspend fun backgroundFillGlobalGrid(category: NewsCategory) {
+        Log.d(TAG, "REPO: starting background grid fill")
+        _diagnostics.value = _diagnostics.value.copy(
+            pipelineSummary = _diagnostics.value.pipelineSummary + " + Background fill..."
+        )
+        try {
+            gdeltDataSource.backgroundFillGrid(category) { regionName, regionArticles ->
+                val regionStories = regionArticles.mapNotNull { StoryMappers.fromGdelt(it) }
+                val currentData = (storiesFlow.value as? Result.Success)?.data ?: emptyList()
+                val merged = deduplicateStories(currentData + regionStories)
+                    .sortedByDescending { it.publishedAt }
+                    .take(Constants.MAX_TOTAL_STORIES)
+                if (merged.size > currentData.size) {
+                    storiesFlow.value = Result.Success(merged)
+                    _diagnostics.value = _diagnostics.value
+                        .addLog("GDELT", regionName, "bg +${merged.size - currentData.size}")
+                        .copy(
+                            liveTotal = "${merged.size} live stories (filling...)",
+                            pipelineSummary = "LIVE — ${merged.size} stories. Background fill..."
+                        )
+                }
+            }
+            // Persist all accumulated stories to Room after fill completes
+            val finalData = (storiesFlow.value as? Result.Success)?.data ?: emptyList()
+            val finalCount = finalData.size
+            try {
+                storyDao.upsertAll(finalData.map { StoryMappers.toEntity(it) })
+            } catch (e: Exception) {
+                Log.e(TAG, "REPO: bg fill final cache write failed: ${e.message}")
+            }
+            val cacheTotal = try { storyDao.count() } catch (e: Exception) { 0 }
+            _diagnostics.value = _diagnostics.value.copy(
+                pipelineSummary = "LIVE — $finalCount stories (fill complete)",
+                cacheStatus = "$cacheTotal stories cached"
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "REPO: background fill failed: ${e.message}")
         }
     }
 
