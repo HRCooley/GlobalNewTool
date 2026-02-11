@@ -4,11 +4,12 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [CustomFeedEntity::class, ManagedFeed::class],
-    version = 2,
+    entities = [CustomFeedEntity::class, ManagedFeed::class, CachedStoryEntity::class],
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun customFeedDao(): CustomFeedDao
     abstract fun managedFeedDao(): ManagedFeedDao
+    abstract fun storyDao(): StoryDao
 }

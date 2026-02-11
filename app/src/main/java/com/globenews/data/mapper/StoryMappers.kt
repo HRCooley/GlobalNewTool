@@ -1,5 +1,6 @@
 package com.globenews.data.mapper
 
+import com.globenews.data.source.local.CachedStoryEntity
 import com.globenews.data.source.local.FallbackStory
 import com.globenews.data.source.remote.gdelt.GdeltArticleWithLocation
 import com.globenews.data.source.remote.gnews.GNewsArticle
@@ -170,6 +171,64 @@ object StoryMappers {
                 )
             ),
             language = "en",
+            sentiment = null
+        )
+    }
+
+    fun toEntity(story: NewsStory): CachedStoryEntity {
+        val source = story.sources.firstOrNull()
+        return CachedStoryEntity(
+            id = story.id,
+            title = story.title,
+            summary = story.summary,
+            url = story.url,
+            imageUrl = story.imageUrl,
+            publishedAt = story.publishedAt.toEpochMilli(),
+            latitude = story.location.latitude,
+            longitude = story.location.longitude,
+            placeName = story.location.placeName,
+            countryCode = story.location.countryCode,
+            scope = story.scope.name,
+            category = story.category.name,
+            sourceName = source?.name ?: "Unknown",
+            providerApi = source?.providerApi ?: "unknown",
+            language = story.language
+        )
+    }
+
+    fun fromEntity(entity: CachedStoryEntity): NewsStory {
+        return NewsStory(
+            id = entity.id,
+            title = entity.title,
+            summary = entity.summary,
+            url = entity.url,
+            imageUrl = entity.imageUrl,
+            publishedAt = Instant.ofEpochMilli(entity.publishedAt),
+            location = StoryLocation(
+                latitude = entity.latitude,
+                longitude = entity.longitude,
+                placeName = entity.placeName,
+                countryCode = entity.countryCode,
+                admin1 = null
+            ),
+            scope = try {
+                EditorialScope.valueOf(entity.scope)
+            } catch (e: Exception) {
+                EditorialScope.INTERNATIONAL
+            },
+            category = try {
+                NewsCategory.valueOf(entity.category)
+            } catch (e: Exception) {
+                NewsCategory.ALL
+            },
+            sources = listOf(
+                SourceAttribution(
+                    name = entity.sourceName,
+                    providerApi = entity.providerApi,
+                    retrievedAt = Instant.ofEpochMilli(entity.cachedAt)
+                )
+            ),
+            language = entity.language,
             sentiment = null
         )
     }
