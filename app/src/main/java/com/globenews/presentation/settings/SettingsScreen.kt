@@ -105,6 +105,8 @@ fun SettingsScreen(
                     DiagnosticRow("Network Test", diagnostics.networkTest)
                     DiagnosticRow("Pipeline", diagnostics.pipelineSummary)
                     DiagnosticRow("Live Total", diagnostics.liveTotal)
+                    DiagnosticRow("Cache", diagnostics.cacheStatus)
+                    DiagnosticRow("Queries", "${diagnostics.queriesUsed}/${diagnostics.queriesMax} this session")
 
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
@@ -250,7 +252,7 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             Text("About", style = MaterialTheme.typography.titleMedium)
-            Text("GlobeNews v3.2", style = MaterialTheme.typography.bodyMedium)
+            Text("GlobeNews v3.5", style = MaterialTheme.typography.bodyMedium)
             Text(
                 "Real-time global news visualization on an interactive map. " +
                     "News sourced from GDELT, Google News, and curated RSS feeds worldwide.",

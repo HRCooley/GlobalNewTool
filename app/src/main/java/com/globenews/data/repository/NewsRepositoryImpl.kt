@@ -379,7 +379,13 @@ class NewsRepositoryImpl @Inject constructor(
                 globalGridCacheCategory = category
                 try {
                     storyDao.upsertAll(deduped.map { StoryMappers.toEntity(it) })
-                    Log.d(TAG, "REPO: upserted ${deduped.size} stories into Room cache")
+                    val cacheTotal = storyDao.count()
+                    Log.d(TAG, "REPO: upserted ${deduped.size} stories into Room cache ($cacheTotal total)")
+                    _diagnostics.value = _diagnostics.value.copy(
+                        cacheStatus = "$cacheTotal stories cached",
+                        queriesUsed = queriesThisSession,
+                        queriesMax = MAX_QUERIES
+                    )
                 } catch (e: Exception) {
                     Log.e(TAG, "REPO: Room cache write failed: ${e.message}")
                 }

@@ -30,6 +30,10 @@ data class DiagnosticInfo(
     val rssFeedsSucceeded: Int = 0,
     val rssFeedsFailed: Int = 0,
     val rssFeedsStillFetching: Int = 0,
+    // Cache
+    val cacheStatus: String = "Not loaded",
+    val queriesUsed: Int = 0,
+    val queriesMax: Int = 40,
     // Scrollable log (last 50 entries)
     val logEntries: List<DiagnosticLogEntry> = emptyList()
 ) {
