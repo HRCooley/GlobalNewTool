@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -70,7 +71,7 @@ class GlobeViewModel @Inject constructor(
         observeJob = viewModelScope.launch {
             val state = _uiState.value
             Log.d("GlobeNews", "VIEWMODEL: observeStories started, zoom=${state.currentView.zoom}, category=${state.selectedCategory}")
-            getStoriesForView(state.currentView, state.selectedCategory).collectLatest { result ->
+            getStoriesForView(state.currentView, state.selectedCategory).distinctUntilChanged().collectLatest { result ->
                 when (result) {
                     is Result.Loading -> {
                         Log.d("GlobeNews", "VIEWMODEL: received Result.Loading")
@@ -127,9 +128,8 @@ class GlobeViewModel @Inject constructor(
         if (tierChanged) {
             Log.d("GlobeNews", "VIEWMODEL: zoom tier changed $currentZoomTier -> $newTier")
             currentZoomTier = newTier
+            observeStories()
         }
-
-        observeStories()
 
         // Debounce refresh: cancel previous, wait 800ms for camera to settle
         refreshJob?.cancel()
