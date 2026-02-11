@@ -159,7 +159,12 @@ class NewsRepositoryImpl @Inject constructor(
                     storyDao.getInBounds(90.0, -90.0, 180.0, -180.0, maxAge)
                 }
                 if (cached.isNotEmpty()) {
-                    storiesFlow.value = Result.Success(cached.map { StoryMappers.fromEntity(it) })
+                    val cachedStories = cached.map { StoryMappers.fromEntity(it) }
+                    val existing = (storiesFlow.value as? Result.Success)?.data ?: emptyList()
+                    val merged = deduplicateStories(existing + cachedStories)
+                        .sortedByDescending { it.publishedAt }
+                        .take(Constants.MAX_TOTAL_STORIES)
+                    storiesFlow.value = Result.Success(merged)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "REPO: cache-only read failed: ${e.message}")
@@ -301,13 +306,14 @@ class NewsRepositoryImpl @Inject constructor(
                 _diagnostics.value = _diagnostics.value.copy(gdeltStatus = "FAILED: ${e.message}")
             }
 
-            // ── STEP 3: Push GDELT interim to map immediately ──
+            // ── STEP 3: Push GDELT interim to map (merge with existing) ──
             if (stories.isNotEmpty()) {
-                val interim = deduplicateStories(stories)
+                val existing = (storiesFlow.value as? Result.Success)?.data ?: emptyList()
+                val interim = deduplicateStories(existing + stories)
                     .sortedByDescending { it.publishedAt }
                     .take(Constants.MAX_TOTAL_STORIES)
                 storiesFlow.value = Result.Success(interim)
-                Log.d(TAG, "REPO: interim update — ${interim.size} GDELT stories pushed to map")
+                Log.d(TAG, "REPO: interim merge — ${interim.size} stories on map (${stories.size} new GDELT + ${existing.size} existing)")
             }
 
             // ── STEP 4: Viewport RSS (only feeds on screen + international) ──
@@ -366,21 +372,26 @@ class NewsRepositoryImpl @Inject constructor(
             Log.d("GlobeNews", "REPO: after dedup: ${deduped.size} stories (from ${stories.size})")
 
             if (deduped.isNotEmpty()) {
-                Log.d("GlobeNews", ">>> LIVE DATA OK: ${deduped.size} stories")
-                storiesFlow.value = Result.Success(deduped)
+                // Merge new stories with any existing accumulated stories
+                val existing = (storiesFlow.value as? Result.Success)?.data ?: emptyList()
+                val finalMerged = deduplicateStories(existing + deduped)
+                    .sortedByDescending { it.publishedAt }
+                    .take(Constants.MAX_TOTAL_STORIES)
+                Log.d("GlobeNews", ">>> LIVE DATA OK: ${finalMerged.size} stories (${deduped.size} new + ${existing.size} existing)")
+                storiesFlow.value = Result.Success(finalMerged)
                 _diagnostics.value = _diagnostics.value.copy(
-                    liveTotal = "${deduped.size} live stories (GDELT=$gdeltCount, RSS=$rssCount)",
-                    pipelineSummary = "LIVE — ${deduped.size} stories"
+                    liveTotal = "${finalMerged.size} live stories (GDELT=$gdeltCount, RSS=$rssCount)",
+                    pipelineSummary = "LIVE — ${finalMerged.size} stories"
                 )
 
                 // Cache in memory + Room
-                globalGridCache = deduped
+                globalGridCache = finalMerged
                 globalGridCacheTime = Instant.now()
                 globalGridCacheCategory = category
                 try {
-                    storyDao.upsertAll(deduped.map { StoryMappers.toEntity(it) })
+                    storyDao.upsertAll(finalMerged.map { StoryMappers.toEntity(it) })
                     val cacheTotal = storyDao.count()
-                    Log.d(TAG, "REPO: upserted ${deduped.size} stories into Room cache ($cacheTotal total)")
+                    Log.d(TAG, "REPO: upserted ${finalMerged.size} stories into Room cache ($cacheTotal total)")
                     _diagnostics.value = _diagnostics.value.copy(
                         cacheStatus = "$cacheTotal stories cached",
                         queriesUsed = queriesThisSession,
