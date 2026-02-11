@@ -48,6 +48,12 @@ interface ManagedFeedDao {
     @Query("UPDATE managed_feeds SET lastFetchAt = :time, lastError = :error, consecutiveFailures = consecutiveFailures + 1, totalFetches = totalFetches + 1 WHERE id = :id")
     suspend fun recordFailure(id: String, time: Long, error: String)
 
+    @Query("SELECT * FROM managed_feeds WHERE enabled = 1 AND consecutiveFailures < 5 AND latitude BETWEEN :south AND :north AND longitude BETWEEN :west AND :east")
+    suspend fun getFeedsInBounds(north: Double, south: Double, east: Double, west: Double): List<ManagedFeed>
+
+    @Query("SELECT * FROM managed_feeds WHERE enabled = 1 AND consecutiveFailures < 5 AND scope = 'INTERNATIONAL'")
+    suspend fun getInternationalFeeds(): List<ManagedFeed>
+
     @Query("UPDATE managed_feeds SET consecutiveFailures = 0, lastError = null")
     suspend fun resetAllFailures()
 }

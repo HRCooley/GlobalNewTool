@@ -185,6 +185,64 @@ class RssDataSource @Inject constructor(
         return capped
     }
 
+    /**
+     * Fetch only feeds visible in the current viewport + international feeds.
+     * Much faster than fetchAllManagedFeeds — typically 10-30 feeds instead of 297.
+     */
+    suspend fun fetchForViewport(
+        north: Double, south: Double, east: Double, west: Double,
+        onFeedResult: ((RssFeedResult) -> Unit)? = null,
+        onTotalKnown: ((Int) -> Unit)? = null
+    ): List<RssItem> {
+        val intl = managedFeedDao.getInternationalFeeds()
+        val local = managedFeedDao.getFeedsInBounds(north, south, east, west)
+        val feeds = (intl + local).distinctBy { it.url }.take(30)
+
+        Log.d("GlobeNews", "RSS viewport: ${feeds.size} feeds (${intl.size} intl + ${local.size} local)")
+        if (feeds.isEmpty()) return emptyList()
+
+        onTotalKnown?.invoke(feeds.size)
+
+        val allItems = Collections.synchronizedList(mutableListOf<RssItem>())
+        var successCount = 0
+        var failCount = 0
+
+        feeds.chunked(Constants.RSS_BATCH_SIZE).forEachIndexed { batchIdx, batch ->
+            coroutineScope {
+                batch.map { feed ->
+                    async {
+                        try {
+                            val items = fetchManagedFeed(feed)
+                                .take(Constants.RSS_MAX_ITEMS_PER_FEED)
+                            managedFeedDao.recordSuccess(feed.id, System.currentTimeMillis())
+                            allItems.addAll(items)
+                            successCount++
+                            onFeedResult?.invoke(
+                                RssFeedResult(feed.name, items.size, succeeded = true)
+                            )
+                        } catch (e: Exception) {
+                            managedFeedDao.recordFailure(
+                                feed.id, System.currentTimeMillis(),
+                                e.message ?: "Unknown error"
+                            )
+                            failCount++
+                            onFeedResult?.invoke(
+                                RssFeedResult(feed.name, 0, succeeded = false,
+                                    error = e.message ?: "Unknown error")
+                            )
+                        }
+                    }
+                }.awaitAll()
+            }
+            if (batchIdx < feeds.chunked(Constants.RSS_BATCH_SIZE).size - 1) {
+                delay(500)
+            }
+        }
+
+        Log.d("GlobeNews", "RSS viewport: Done. $successCount OK, $failCount failed, ${allItems.size} items")
+        return allItems.take(Constants.RSS_MAX_STORIES)
+    }
+
     private suspend fun fetchManagedFeed(feed: ManagedFeed): List<RssItem> = withContext(Dispatchers.IO) {
         val config = RssFeedConfig(
             name = feed.name,
