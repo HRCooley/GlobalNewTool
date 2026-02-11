@@ -177,6 +177,12 @@ class NewsRepositoryImpl @Inject constructor(
                         _diagnostics.value = _diagnostics.value.copy(gdeltStatus = "FAILED: ${e.message}")
                     }
 
+                    // Push GDELT results to map immediately — don't wait for slow RSS
+                    if (stories.isNotEmpty()) {
+                        storiesFlow.value = Result.Success(deduplicateStories(stories))
+                        Log.d(TAG, "REPO: interim update — ${stories.size} GDELT stories pushed to map")
+                    }
+
                     // Managed RSS feeds (297 bundled + user custom) — cached
                     _diagnostics.value = _diagnostics.value.copy(rssStatus = "Fetching feeds...")
                     val rssStories = getCachedRssStories()
