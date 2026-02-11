@@ -20,6 +20,7 @@ import com.globenews.domain.model.NewsStory
 import com.globenews.domain.model.QueryRegion
 import com.globenews.domain.repository.DiagnosticInfo
 import com.globenews.domain.repository.NewsRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -317,6 +318,9 @@ class NewsRepositoryImpl @Inject constructor(
                     pipelineSummary = "FALLBACK ONLY — all network sources returned 0. Check GDELT and RSS status above."
                 )
             }
+        } catch (e: CancellationException) {
+            Log.d("GlobeNews", "REPO: refreshStories cancelled, rethrowing")
+            throw e
         } catch (e: Exception) {
             Log.e("GlobeNews", ">>> LIVE DATA EXCEPTION: ${e.javaClass.simpleName}: ${e.message}", e)
             _diagnostics.value = _diagnostics.value.copy(
