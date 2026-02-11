@@ -102,46 +102,46 @@ class NewsRepositoryImpl @Inject constructor(
     override suspend fun refreshStories(view: GlobeView, category: NewsCategory) {
         Log.d("GlobeNews", "REPO: refreshStories called, zoom=${view.zoom}, category=$category")
 
-        // Step 1: Show Room cache → fallback instantly
-        val current = storiesFlow.value
-        val hasRealData = current is Result.Success && current.data.isNotEmpty()
-        if (!hasRealData) {
-            // Try Room cache first (stories less than 24h old)
-            try {
-                val bounds = view.bounds
-                val maxAge = System.currentTimeMillis() - (24 * 60 * 60 * 1000L)
-                val cached = if (bounds != null) {
-                    storyDao.getInBounds(bounds.north, bounds.south, bounds.east, bounds.west, maxAge)
-                } else {
-                    storyDao.getInBounds(90.0, -90.0, 180.0, -180.0, maxAge)
-                }
-                if (cached.isNotEmpty()) {
-                    val cachedStories = cached.map { StoryMappers.fromEntity(it) }
-                    Log.d(TAG, "REPO: emitting ${cachedStories.size} Room-cached stories")
-                    storiesFlow.value = Result.Success(cachedStories)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "REPO: Room cache read failed: ${e.message}")
+        // Step 1: Always load Room cache for viewport (merge with existing)
+        try {
+            val bounds = view.bounds
+            val maxAge = System.currentTimeMillis() - (2 * 60 * 60 * 1000L) // 2h TTL
+            val cached = if (bounds != null) {
+                storyDao.getInBounds(bounds.north, bounds.south, bounds.east, bounds.west, maxAge)
+            } else {
+                storyDao.getInBounds(90.0, -90.0, 180.0, -180.0, maxAge)
             }
+            if (cached.isNotEmpty()) {
+                val cachedStories = cached.map { StoryMappers.fromEntity(it) }
+                val existing = (storiesFlow.value as? Result.Success)?.data ?: emptyList()
+                val merged = deduplicateStories(existing + cachedStories)
+                    .sortedByDescending { it.publishedAt }
+                    .take(Constants.MAX_TOTAL_STORIES)
+                storiesFlow.value = Result.Success(merged)
+                Log.d(TAG, "REPO: ${cached.size} stories from Room cache (${merged.size} total)")
+                _diagnostics.value = _diagnostics.value.copy(
+                    cacheStatus = "${cached.size} cached stories loaded"
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "REPO: Room cache read failed: ${e.message}")
+        }
 
-            // Fallback if still no data
-            val afterCache = storiesFlow.value
-            if (afterCache !is Result.Success || afterCache.data.isEmpty()) {
-                try {
-                    val fallback = fallbackDataSource.loadFallbackStories().map { StoryMappers.fromFallback(it) }
-                    Log.d(TAG, "REPO: emitting ${fallback.size} fallback stories (no existing data)")
-                    if (fallback.isNotEmpty()) {
-                        storiesFlow.value = Result.Success(fallback)
-                    } else {
-                        storiesFlow.value = Result.Loading
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "REPO: fallback load failed: ${e.message}")
+        // Fallback if still no data at all
+        val afterCache = storiesFlow.value
+        if (afterCache !is Result.Success || afterCache.data.isEmpty()) {
+            try {
+                val fallback = fallbackDataSource.loadFallbackStories().map { StoryMappers.fromFallback(it) }
+                Log.d(TAG, "REPO: emitting ${fallback.size} fallback stories (no existing data)")
+                if (fallback.isNotEmpty()) {
+                    storiesFlow.value = Result.Success(fallback)
+                } else {
                     storiesFlow.value = Result.Loading
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "REPO: fallback load failed: ${e.message}")
+                storiesFlow.value = Result.Loading
             }
-        } else {
-            Log.d(TAG, "REPO: skipping fallback, already have ${(current as Result.Success).data.size} stories")
         }
 
         // Session query cap — serve from cache only when budget exhausted
@@ -152,7 +152,7 @@ class NewsRepositoryImpl @Inject constructor(
             )
             try {
                 val bounds = view.bounds
-                val maxAge = System.currentTimeMillis() - (24 * 60 * 60 * 1000L)
+                val maxAge = System.currentTimeMillis() - (2 * 60 * 60 * 1000L) // 2h TTL
                 val cached = if (bounds != null) {
                     storyDao.getInBounds(bounds.north, bounds.south, bounds.east, bounds.west, maxAge)
                 } else {
@@ -314,6 +314,12 @@ class NewsRepositoryImpl @Inject constructor(
                     .take(Constants.MAX_TOTAL_STORIES)
                 storiesFlow.value = Result.Success(interim)
                 Log.d(TAG, "REPO: interim merge — ${interim.size} stories on map (${stories.size} new GDELT + ${existing.size} existing)")
+                // Persist GDELT stories immediately so they survive cancellation
+                try {
+                    storyDao.upsertAll(stories.map { StoryMappers.toEntity(it) })
+                } catch (e: Exception) {
+                    Log.e(TAG, "REPO: GDELT interim cache write failed: ${e.message}")
+                }
             }
 
             // ── STEP 4: Viewport RSS (only feeds on screen + international) ──
