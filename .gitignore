@@ -10,6 +10,7 @@
 local.properties
 *.apk
 !GlobeNews-debug.apk
+!Threadline-debug.apk
 *.aab
 *.ap_
 *.dex
