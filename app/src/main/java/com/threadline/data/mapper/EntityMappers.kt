@@ -63,7 +63,7 @@ object EntityMappers {
             sourceName = article.domain ?: "Unknown",
             providerApi = "gdelt",
             language = article.language ?: "unknown",
-            sentiment = article.tone?.toFloatOrNull()
+            sentiment = article.tone?.split(",")?.firstOrNull()?.trim()?.toFloatOrNull()
         )
     }
 
