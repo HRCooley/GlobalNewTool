@@ -24,6 +24,11 @@ class RssDataSource @Inject constructor(
 ) {
     companion object {
         private const val TAG = "RssDataSource"
+        val PRIORITY_FEEDS = listOf(
+            "Al Jazeera", "BBC World", "The Guardian World", "France 24",
+            "DW News", "Reuters", "Associated Press", "NPR",
+            "The Conversation", "Ars Technica", "BleepingComputer"
+        )
     }
 
     private val rssClient: OkHttpClient by lazy {
@@ -33,7 +38,9 @@ class RssDataSource @Inject constructor(
             .build()
     }
 
-    suspend fun fetchAllManagedFeeds(): List<RssItem> {
+    suspend fun fetchAllManagedFeeds(
+        onBatchReady: (suspend (List<RssItem>) -> Unit)? = null
+    ): List<RssItem> {
         var feeds = feedDao.getEnabled().filter { it.consecutiveFailures < 10 }
 
         if (feeds.isEmpty()) {
@@ -52,8 +59,12 @@ class RssDataSource @Inject constructor(
             }
         }
 
+        // Sort: priority feeds first, then the rest
+        val priorityNames = PRIORITY_FEEDS.map { it.lowercase() }.toSet()
+        val sorted = feeds.sortedByDescending { it.name.lowercase() in priorityNames }
+
         // Cap at 30 feeds per fetch
-        val cappedFeeds = feeds.take(30)
+        val cappedFeeds = sorted.take(30)
         Log.d(TAG, "RSS: fetching ${cappedFeeds.size} feeds (of ${feeds.size} enabled)")
 
         val allItems = Collections.synchronizedList(mutableListOf<RssItem>())
@@ -62,6 +73,7 @@ class RssDataSource @Inject constructor(
 
         val batches = cappedFeeds.chunked(5)
         batches.forEachIndexed { batchIdx, batch ->
+            val batchItems = Collections.synchronizedList(mutableListOf<RssItem>())
             coroutineScope {
                 batch.map { feed ->
                     async {
@@ -69,6 +81,7 @@ class RssDataSource @Inject constructor(
                             val items = fetchSingleFeed(feed)
                             feedDao.recordSuccess(feed.id, System.currentTimeMillis())
                             allItems.addAll(items)
+                            batchItems.addAll(items)
                             successCount++
                         } catch (e: CancellationException) {
                             throw e
@@ -83,6 +96,10 @@ class RssDataSource @Inject constructor(
                         }
                     }
                 }.awaitAll()
+            }
+            // Emit batch incrementally
+            if (batchItems.isNotEmpty() && onBatchReady != null) {
+                onBatchReady(batchItems.toList())
             }
             if (batchIdx < batches.size - 1) {
                 delay(500)

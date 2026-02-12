@@ -187,7 +187,20 @@ class FeedRepositoryImpl @Inject constructor(
         if (cacheValid) return rssCache
 
         return try {
-            val rssItems = rssDataSource.fetchAllManagedFeeds()
+            val rssItems = rssDataSource.fetchAllManagedFeeds { batchItems ->
+                // Incremental: emit each batch to the UI as it arrives
+                val batchStories = batchItems.map { EntityMappers.rssToStory(it) }
+                if (batchStories.isNotEmpty()) {
+                    val existing = when (val current = storiesFlow.value) {
+                        is Result.Success -> current.data
+                        else -> emptyList()
+                    }
+                    val merged = mergeStories(existing, batchStories)
+                        .take(Constants.MAX_STORIES_TOTAL)
+                    storiesFlow.value = Result.Success(merged)
+                    Log.d(TAG, "REPO: RSS batch +${batchStories.size} → ${merged.size} total")
+                }
+            }
             val rssStories = rssItems.map { EntityMappers.rssToStory(it) }
                 .take(Constants.MAX_STORIES_PER_SOURCE)
             if (rssStories.isNotEmpty()) {
