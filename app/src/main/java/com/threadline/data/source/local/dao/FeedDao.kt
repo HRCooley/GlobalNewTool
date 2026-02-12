@@ -59,4 +59,7 @@ interface FeedDao {
 
     @Query("UPDATE managed_feeds SET consecutiveFailures = 0, lastError = null")
     suspend fun resetAllFailures()
+
+    @Query("SELECT * FROM managed_feeds WHERE name = :name LIMIT 1")
+    suspend fun getByName(name: String): ManagedFeedEntity?
 }
