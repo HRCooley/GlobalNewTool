@@ -19,13 +19,13 @@ import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import kotlinx.coroutines.launch
 import java.time.Duration
 import java.time.Instant
 import javax.inject.Inject
@@ -38,7 +38,6 @@ class FeedRepositoryImpl @Inject constructor(
     private val rssDataSource: RssDataSource,
     private val storyDao: StoryDao,
     private val feedDao: FeedDao,
-    private val okHttpClient: OkHttpClient,
     private val moshi: Moshi
 ) : FeedRepository {
 
@@ -52,8 +51,8 @@ class FeedRepositoryImpl @Inject constructor(
 
     private var rssCache: List<NewsStory> = emptyList()
     private var rssCacheTime: Instant = Instant.EPOCH
-    private var networkTestDone = false
-    private var queryCount = 0
+    private var rssLoaded = false
+    private val gdeltScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun getStories(): Flow<Result<List<NewsStory>>> = storiesFlow
 
@@ -69,7 +68,6 @@ class FeedRepositoryImpl @Inject constructor(
                 storiesFlow.value = Result.Success(stories)
                 _diagnostics.value = _diagnostics.value.copy(cacheCount = "${cached.size}")
             } else {
-                // Try fallback
                 val fallback = loadFallbackStories()
                 if (fallback.isNotEmpty()) {
                     storiesFlow.value = Result.Success(fallback)
@@ -84,55 +82,13 @@ class FeedRepositoryImpl @Inject constructor(
             storiesFlow.value = Result.Loading
         }
 
-        // One-time network test
-        if (!networkTestDone) {
-            networkTestDone = true
-            _diagnostics.value = _diagnostics.value.copy(networkTest = "Testing...")
-            try {
-                withContext(Dispatchers.IO) {
-                    val testUrl = "https://api.gdeltproject.org/api/v2/doc/doc?query=news&mode=artlist&maxrecords=1&format=json"
-                    val request = Request.Builder().url(testUrl).build()
-                    val response = okHttpClient.newCall(request).execute()
-                    _diagnostics.value = _diagnostics.value.copy(networkTest = "OK — HTTP ${response.code}")
-                    response.close()
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _diagnostics.value = _diagnostics.value.copy(networkTest = "FAILED: ${e.message}")
-            }
-        }
-
-        // Session query cap
-        if (queryCount >= Constants.MAX_QUERIES_PER_SESSION) {
-            Log.w(TAG, "REPO: session query cap reached ($queryCount)")
-            return
-        }
-        queryCount++
-
-        // 2. Fetch GDELT → merge
-        val allStories = mutableListOf<NewsStory>()
-        try {
-            _diagnostics.value = _diagnostics.value.copy(gdeltStatus = "Fetching ${GLOBAL_GRID.size} regions...")
-            val gdeltResults = gdeltDataSource.fetchForRegions(GLOBAL_GRID)
-            val gdeltStories = gdeltResults.mapNotNull { EntityMappers.gdeltToStory(it) }
-                .take(Constants.MAX_STORIES_PER_SOURCE)
-            allStories.addAll(gdeltStories)
-            Log.d(TAG, "REPO: GDELT returned ${gdeltStories.size} stories")
-            _diagnostics.value = _diagnostics.value.copy(gdeltStatus = "${gdeltStories.size} stories")
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "REPO: GDELT failed: ${e.message}")
-            _diagnostics.value = _diagnostics.value.copy(gdeltStatus = "FAILED: ${e.message}")
-        }
-
-        // 3. Fetch RSS → merge
+        // 2. Fetch RSS FIRST — primary data source
+        val rssStories = mutableListOf<NewsStory>()
         try {
             _diagnostics.value = _diagnostics.value.copy(rssStatus = "Fetching feeds...")
-            val rssStories = getCachedRssStories()
-            allStories.addAll(rssStories)
-            Log.d(TAG, "REPO: RSS contributed ${rssStories.size} stories")
+            val stories = getCachedRssStories()
+            rssStories.addAll(stories)
+            Log.d(TAG, "REPO: RSS returned ${rssStories.size} stories")
             _diagnostics.value = _diagnostics.value.copy(rssStatus = "${rssStories.size} stories")
         } catch (e: CancellationException) {
             throw e
@@ -141,23 +97,22 @@ class FeedRepositoryImpl @Inject constructor(
             _diagnostics.value = _diagnostics.value.copy(rssStatus = "FAILED: ${e.message}")
         }
 
-        // Deduplicate and cap
-        val deduped = deduplicateStories(allStories).take(Constants.MAX_STORIES_TOTAL)
-        Log.d(TAG, "REPO: after dedup: ${deduped.size} (from ${allStories.size})")
-
-        if (deduped.isNotEmpty()) {
-            // Merge with existing
+        // Emit RSS stories immediately
+        if (rssStories.isNotEmpty()) {
+            val deduped = deduplicateStories(rssStories).take(Constants.MAX_STORIES_TOTAL)
             val existing = when (val current = storiesFlow.value) {
                 is Result.Success -> current.data
                 else -> emptyList()
             }
             val merged = mergeStories(existing, deduped).take(Constants.MAX_STORIES_TOTAL)
             storiesFlow.value = Result.Success(merged)
+            rssLoaded = true
             _diagnostics.value = _diagnostics.value.copy(
-                pipelineSummary = "LIVE — ${merged.size} stories"
+                pipelineSummary = "RSS — ${merged.size} stories",
+                networkTest = "RSS OK"
             )
 
-            // Cache to Room
+            // Cache RSS to Room
             try {
                 val entities = deduped.map { EntityMappers.storyToEntity(it) }
                 storyDao.upsertAll(entities)
@@ -165,11 +120,63 @@ class FeedRepositoryImpl @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "REPO: cache write failed: ${e.message}")
+                Log.e(TAG, "REPO: RSS cache write failed: ${e.message}")
             }
         } else {
             _diagnostics.value = _diagnostics.value.copy(
-                pipelineSummary = "No new stories from network"
+                pipelineSummary = "RSS returned 0 stories"
+            )
+        }
+
+        // 3. GDELT — non-blocking background enrichment, only after RSS loaded
+        if (rssLoaded) {
+            gdeltScope.launch { fetchGdeltBackground() }
+        }
+    }
+
+    private suspend fun fetchGdeltBackground() {
+        try {
+            _diagnostics.value = _diagnostics.value.copy(
+                gdeltStatus = "Fetching ${GLOBAL_GRID.size} regions..."
+            )
+            val gdeltResults = gdeltDataSource.fetchForRegions(GLOBAL_GRID)
+            val gdeltStories = gdeltResults.mapNotNull { EntityMappers.gdeltToStory(it) }
+                .take(Constants.MAX_STORIES_PER_SOURCE)
+            Log.d(TAG, "REPO: GDELT returned ${gdeltStories.size} stories (background)")
+            _diagnostics.value = _diagnostics.value.copy(
+                gdeltStatus = "${gdeltStories.size} stories"
+            )
+
+            if (gdeltStories.isNotEmpty()) {
+                val existing = when (val current = storiesFlow.value) {
+                    is Result.Success -> current.data
+                    else -> emptyList()
+                }
+                val allNew = deduplicateStories(gdeltStories)
+                val merged = mergeStories(existing, allNew).take(Constants.MAX_STORIES_TOTAL)
+                storiesFlow.value = Result.Success(merged)
+                _diagnostics.value = _diagnostics.value.copy(
+                    pipelineSummary = "LIVE — ${merged.size} stories (RSS+GDELT)"
+                )
+
+                try {
+                    val entities = allNew.map { EntityMappers.storyToEntity(it) }
+                    storyDao.upsertAll(entities)
+                    _diagnostics.value = _diagnostics.value.copy(
+                        cacheCount = "${storyDao.count()}"
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e(TAG, "REPO: GDELT cache write failed: ${e.message}")
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "REPO: GDELT background failed: ${e.message}")
+            _diagnostics.value = _diagnostics.value.copy(
+                gdeltStatus = "FAILED: ${e.message}"
             )
         }
     }
