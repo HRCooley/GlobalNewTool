@@ -151,7 +151,18 @@ private fun ClusterCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { expanded = !expanded }
+            .clickable {
+                if (cluster.stories.size == 1) {
+                    // Single source — open article directly
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(cluster.stories[0].url))
+                        context.startActivity(intent)
+                    } catch (_: Exception) { }
+                } else {
+                    // Multi-source — toggle expand to show all sources
+                    expanded = !expanded
+                }
+            }
             .animateContentSize(),
         elevation = CardDefaults.cardElevation(defaultElevation = if (isSignal) 4.dp else 2.dp),
         shape = RoundedCornerShape(12.dp),
@@ -281,19 +292,12 @@ private fun ClusterCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else if (cluster.stories.size == 1) {
-                // Single story — make tappable to open
+                // Single story — show source name (card tap opens it)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = cluster.stories[0].sourceName,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.clickable {
-                        val intent = Intent(
-                            Intent.ACTION_VIEW,
-                            Uri.parse(cluster.stories[0].url)
-                        )
-                        context.startActivity(intent)
-                    }
+                    text = "${cluster.stories[0].sourceName} \u2014 tap to read",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
