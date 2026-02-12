@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "GlobeNews"
+rootProject.name = "Threadline"
 include(":app")
