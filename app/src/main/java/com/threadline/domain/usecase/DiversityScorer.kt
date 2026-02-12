@@ -1,11 +1,15 @@
 package com.threadline.domain.usecase
 
+import android.util.Log
 import com.threadline.data.source.local.dao.FeedDao
+import com.threadline.data.source.local.entity.ManagedFeedEntity
 import com.threadline.domain.model.DiversityLevel
 import com.threadline.domain.model.DiversityScore
 import com.threadline.domain.model.StoryCluster
 
 object DiversityScorer {
+
+    private const val TAG = "DiversityScorer"
 
     private val ALL_REGIONS = listOf(
         "north_american", "european", "middle_eastern",
@@ -16,11 +20,43 @@ object DiversityScorer {
         "left_progressive", "right_conservative", "non_aligned"
     )
 
+    private val STRIP_SUFFIXES = Regex(
+        "\\s*(World|News|English|International|Global|Online|Digital|\\(.*?\\))\\s*",
+        RegexOption.IGNORE_CASE
+    )
+
+    private suspend fun findFeedForSource(
+        sourceName: String,
+        feedDao: FeedDao
+    ): ManagedFeedEntity? {
+        // 1. Exact match
+        feedDao.getByName(sourceName)?.let { return it }
+
+        // 2. SQL LIKE containment (either direction)
+        feedDao.getByNameFuzzy(sourceName)?.let { return it }
+
+        // 3. Normalize: strip " World", " News", " (US)", etc. and retry
+        val normalized = sourceName.replace(STRIP_SUFFIXES, " ").trim()
+        if (normalized != sourceName && normalized.isNotEmpty()) {
+            feedDao.getByName(normalized)?.let { return it }
+            feedDao.getByNameFuzzy(normalized)?.let { return it }
+        }
+
+        return null
+    }
+
     suspend fun scoreDiversity(cluster: StoryCluster, feedDao: FeedDao): DiversityScore {
         val feedNames = cluster.stories.map { it.sourceName }.distinct()
 
-        val feeds = feedNames.mapNotNull { name ->
-            feedDao.getByName(name) ?: feedDao.getByNameFuzzy(name)
+        val feeds = feedNames.mapNotNull { name -> findFeedForSource(name, feedDao) }
+
+        if (feeds.size < feedNames.size) {
+            val unmatched = feedNames.filter { name ->
+                feeds.none { it.name.equals(name, ignoreCase = true) }
+            }
+            if (unmatched.isNotEmpty()) {
+                Log.d(TAG, "DIVERSITY: ${unmatched.size} unmatched sources: ${unmatched.take(3)}")
+            }
         }
 
         // Dimension 1: Geographic

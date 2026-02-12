@@ -58,6 +58,9 @@ fun SettingsScreen(
                     DiagRow("Network", diagnostics.networkTest)
                     DiagRow("GDELT", diagnostics.gdeltStatus)
                     DiagRow("RSS", diagnostics.rssStatus)
+                    if (diagnostics.rssFeedSummary.isNotEmpty()) {
+                        DiagRow("Feeds", diagnostics.rssFeedSummary)
+                    }
                     DiagRow("Cache", diagnostics.cacheCount)
                     DiagRow("Pipeline", diagnostics.pipelineSummary)
                 }

@@ -32,6 +32,9 @@ class RssDataSource @Inject constructor(
         )
     }
 
+    var lastFetchSummary: String = ""
+        private set
+
     private val rssClient: OkHttpClient by lazy {
         client.newBuilder()
             .connectTimeout(8, TimeUnit.SECONDS)
@@ -108,7 +111,8 @@ class RssDataSource @Inject constructor(
             }
         }
 
-        Log.d(TAG, "RSS SUMMARY: $successCount/${cappedFeeds.size} feeds succeeded, ${allItems.size} stories")
+        lastFetchSummary = "$successCount/${cappedFeeds.size} feeds OK, $failCount failed, ${allItems.size} stories"
+        Log.d(TAG, "RSS SUMMARY: $lastFetchSummary")
         return allItems
     }
 

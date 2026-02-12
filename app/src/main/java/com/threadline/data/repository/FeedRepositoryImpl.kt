@@ -89,7 +89,10 @@ class FeedRepositoryImpl @Inject constructor(
             val stories = getCachedRssStories()
             rssStories.addAll(stories)
             Log.d(TAG, "REPO: RSS returned ${rssStories.size} stories")
-            _diagnostics.value = _diagnostics.value.copy(rssStatus = "${rssStories.size} stories")
+            _diagnostics.value = _diagnostics.value.copy(
+                rssStatus = "${rssStories.size} stories",
+                rssFeedSummary = rssDataSource.lastFetchSummary
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

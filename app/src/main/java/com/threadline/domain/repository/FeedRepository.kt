@@ -9,6 +9,7 @@ data class DiagnosticInfo(
     val networkTest: String = "Not tested",
     val gdeltStatus: String = "Idle",
     val rssStatus: String = "Idle",
+    val rssFeedSummary: String = "",
     val cacheCount: String = "0",
     val pipelineSummary: String = "Waiting..."
 )
