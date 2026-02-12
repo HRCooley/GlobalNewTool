@@ -122,6 +122,22 @@ class FeedRepositoryImpl @Inject constructor(
             } catch (e: Exception) {
                 Log.e(TAG, "REPO: RSS cache write failed: ${e.message}")
             }
+
+            // DIAGNOSTIC: sample story source names vs feed DB
+            try {
+                val sampleStories = storyDao.getAll(5)
+                sampleStories.forEach { story ->
+                    val feedMatch = feedDao.getByName(story.sourceName)
+                    Log.d(TAG, "STORY SOURCE: '${story.sourceName}' | feed match: ${feedMatch?.name ?: "NO MATCH"}")
+                }
+                // DIAGNOSTIC: sample feed tags
+                val sampleFeeds = feedDao.getAll().take(5)
+                sampleFeeds.forEach { feed ->
+                    Log.d(TAG, "FEED TAGS: '${feed.name}' region=${feed.region} lean=${feed.politicalLean} owner=${feed.ownerName}")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "REPO: diagnostic logging failed: ${e.message}")
+            }
         } else {
             _diagnostics.value = _diagnostics.value.copy(
                 pipelineSummary = "RSS returned 0 stories"

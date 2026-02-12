@@ -83,6 +83,7 @@ class RssDataSource @Inject constructor(
                             allItems.addAll(items)
                             batchItems.addAll(items)
                             successCount++
+                            Log.d(TAG, "RSS RESULT: ${feed.name} - OK: ${items.size} stories")
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
@@ -92,7 +93,7 @@ class RssDataSource @Inject constructor(
                                 e.message ?: "Unknown error"
                             )
                             failCount++
-                            Log.w(TAG, "RSS FAIL: ${feed.name} — ${e.message}")
+                            Log.d(TAG, "RSS RESULT: ${feed.name} - FAIL: ${e.message}")
                         }
                     }
                 }.awaitAll()
@@ -106,7 +107,7 @@ class RssDataSource @Inject constructor(
             }
         }
 
-        Log.d(TAG, "RSS: Done. $successCount OK, $failCount failed, ${allItems.size} items")
+        Log.d(TAG, "RSS SUMMARY: $successCount/${cappedFeeds.size} feeds succeeded, ${allItems.size} stories")
         return allItems
     }
 
