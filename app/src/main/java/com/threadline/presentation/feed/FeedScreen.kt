@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,12 +18,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
@@ -83,15 +86,45 @@ fun FeedScreen(
                 }
             }
             else -> {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                        horizontal = 12.dp, vertical = 8.dp
-                    )
-                ) {
-                    items(state.clusters, key = { it.id }) { cluster ->
-                        ClusterCard(cluster = cluster, context = context)
+                Column(modifier = Modifier.fillMaxSize()) {
+                    // Scope filter row
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        items(FeedViewModel.SCOPES) { scope ->
+                            FilterChip(
+                                selected = state.selectedScope == scope,
+                                onClick = { viewModel.setScope(scope) },
+                                label = { Text(scope, style = MaterialTheme.typography.labelSmall) }
+                            )
+                        }
+                    }
+                    // Category filter row
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(FeedViewModel.CATEGORIES) { cat ->
+                            FilterChip(
+                                selected = state.selectedCategory == cat,
+                                onClick = { viewModel.setCategory(cat) },
+                                label = { Text(cat, style = MaterialTheme.typography.labelSmall) }
+                            )
+                        }
+                    }
+                    // Cluster list
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(
+                            horizontal = 12.dp, vertical = 8.dp
+                        )
+                    ) {
+                        items(state.clusters, key = { it.id }) { cluster ->
+                            ClusterCard(cluster = cluster, context = context)
+                        }
                     }
                 }
             }

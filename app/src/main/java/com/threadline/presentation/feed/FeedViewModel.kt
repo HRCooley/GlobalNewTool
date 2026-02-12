@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.threadline.core.common.Result
 import com.threadline.data.source.local.dao.FeedDao
+import com.threadline.domain.model.DiversityLevel
 import com.threadline.domain.model.NewsStory
 import com.threadline.domain.model.StoryCluster
 import com.threadline.domain.repository.FeedRepository
@@ -20,7 +21,9 @@ data class FeedUiState(
     val clusters: List<StoryCluster> = emptyList(),
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val selectedCategory: String = "All",
+    val selectedScope: String = "Global"
 )
 
 @HiltViewModel
@@ -29,8 +32,15 @@ class FeedViewModel @Inject constructor(
     private val feedDao: FeedDao
 ) : ViewModel() {
 
+    companion object {
+        val CATEGORIES = listOf("All", "CONFLICT", "POLITICS", "ECONOMY", "TECHNOLOGY", "ENVIRONMENT", "HEALTH", "CRIME", "ENERGY")
+        val SCOPES = listOf("Global", "US", "Signals Only")
+    }
+
     private val _uiState = MutableStateFlow(FeedUiState())
     val uiState: StateFlow<FeedUiState> = _uiState
+
+    private var allClusters: List<StoryCluster> = emptyList()
 
     init {
         observeStories()
@@ -65,8 +75,46 @@ class FeedViewModel @Inject constructor(
             val score = DiversityScorer.scoreDiversity(cluster, feedDao)
             cluster.copy(diversityScore = score)
         }
+        allClusters = scored
+        applyFilters()
+    }
+
+    fun setCategory(category: String) {
+        _uiState.value = _uiState.value.copy(selectedCategory = category)
+        applyFilters()
+    }
+
+    fun setScope(scope: String) {
+        _uiState.value = _uiState.value.copy(selectedScope = scope)
+        applyFilters()
+    }
+
+    private fun applyFilters() {
+        val category = _uiState.value.selectedCategory
+        val scope = _uiState.value.selectedScope
+
+        var filtered = allClusters
+
+        // Category filter
+        if (category != "All") {
+            filtered = filtered.filter { cluster ->
+                cluster.categories.any { it.equals(category, ignoreCase = true) }
+            }
+        }
+
+        // Scope filter
+        filtered = when (scope) {
+            "US" -> filtered.filter { cluster ->
+                cluster.stories.any { it.countryCode == "US" }
+            }
+            "Signals Only" -> filtered.filter { cluster ->
+                cluster.diversityScore?.composite == DiversityLevel.SIGNAL
+            }
+            else -> filtered
+        }
+
         _uiState.value = _uiState.value.copy(
-            clusters = scored,
+            clusters = filtered,
             isLoading = false,
             isRefreshing = false,
             error = null
