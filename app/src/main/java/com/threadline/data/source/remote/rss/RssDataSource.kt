@@ -25,9 +25,10 @@ class RssDataSource @Inject constructor(
     companion object {
         private const val TAG = "RssDataSource"
         val PRIORITY_FEEDS = listOf(
-            "Al Jazeera", "BBC World", "The Guardian World", "France 24",
-            "DW News", "Reuters", "Associated Press", "NPR",
-            "The Conversation", "Ars Technica", "BleepingComputer"
+            "Associated Press", "Reuters", "BBC World", "Al Jazeera",
+            "The Guardian World", "NPR", "CNN", "France 24",
+            "DW News", "New York Times", "Washington Post", "Fox News",
+            "Ars Technica", "BleepingComputer"
         )
     }
 
@@ -63,8 +64,8 @@ class RssDataSource @Inject constructor(
         val priorityNames = PRIORITY_FEEDS.map { it.lowercase() }.toSet()
         val sorted = feeds.sortedByDescending { it.name.lowercase() in priorityNames }
 
-        // Cap at 30 feeds per fetch
-        val cappedFeeds = sorted.take(30)
+        // Cap at 50 feeds per fetch
+        val cappedFeeds = sorted.take(50)
         Log.d(TAG, "RSS: fetching ${cappedFeeds.size} feeds (of ${feeds.size} enabled)")
 
         val allItems = Collections.synchronizedList(mutableListOf<RssItem>())

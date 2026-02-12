@@ -127,8 +127,15 @@ class FeedRepositoryImpl @Inject constructor(
             try {
                 val sampleStories = storyDao.getAll(5)
                 sampleStories.forEach { story ->
-                    val feedMatch = feedDao.getByName(story.sourceName)
-                    Log.d(TAG, "STORY SOURCE: '${story.sourceName}' | feed match: ${feedMatch?.name ?: "NO MATCH"}")
+                    val exactMatch = feedDao.getByName(story.sourceName)
+                    val fuzzyMatch = if (exactMatch == null) feedDao.getByNameFuzzy(story.sourceName) else null
+                    val match = exactMatch ?: fuzzyMatch
+                    val matchType = when {
+                        exactMatch != null -> "EXACT"
+                        fuzzyMatch != null -> "FUZZY"
+                        else -> "NO MATCH"
+                    }
+                    Log.d(TAG, "STORY SOURCE: '${story.sourceName}' | $matchType: ${match?.name ?: "—"} region=${match?.region}")
                 }
                 // DIAGNOSTIC: sample feed tags
                 val sampleFeeds = feedDao.getAll().take(5)

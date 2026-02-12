@@ -62,4 +62,7 @@ interface FeedDao {
 
     @Query("SELECT * FROM managed_feeds WHERE name = :name LIMIT 1")
     suspend fun getByName(name: String): ManagedFeedEntity?
+
+    @Query("SELECT * FROM managed_feeds WHERE name = :name OR name LIKE '%' || :name || '%' OR :name LIKE '%' || name || '%' LIMIT 1")
+    suspend fun getByNameFuzzy(name: String): ManagedFeedEntity?
 }

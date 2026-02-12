@@ -15,16 +15,31 @@ class FeedImporter @Inject constructor(
     @ApplicationContext private val context: Context,
     private val feedDao: FeedDao
 ) {
+    companion object {
+        private const val TAG = "FeedImporter"
+        private const val PREFS_NAME = "feed_importer"
+        private const val KEY_IMPORTED_VERSION = "imported_version"
+    }
+
     suspend fun importIfNeeded() {
         try {
-            val existingCount = feedDao.getEnabledCount()
-            if (existingCount > 10) {
-                Log.d("Threadline", "FeedImporter: $existingCount feeds in DB, skipping")
-                return
-            }
-
             val json = context.assets.open("master_feeds.json").bufferedReader().readText()
             val root = JSONObject(json)
+            val fileVersion = root.optInt("version", 1)
+
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val importedVersion = prefs.getInt(KEY_IMPORTED_VERSION, 0)
+
+            if (importedVersion >= fileVersion) {
+                val existingCount = feedDao.getEnabledCount()
+                if (existingCount > 10) {
+                    Log.d(TAG, "FeedImporter: v$fileVersion already imported, $existingCount feeds in DB")
+                    return
+                }
+            }
+
+            Log.d(TAG, "FeedImporter: importing v$fileVersion (was v$importedVersion)")
+
             val array = root.getJSONArray("feeds")
 
             var currentCategory = "uncategorized"
@@ -76,9 +91,10 @@ class FeedImporter @Inject constructor(
             }
 
             feedDao.upsertAll(feeds)
-            Log.d("Threadline", "FeedImporter: imported ${feeds.size} feeds")
+            prefs.edit().putInt(KEY_IMPORTED_VERSION, fileVersion).apply()
+            Log.d(TAG, "FeedImporter: imported ${feeds.size} feeds (v$fileVersion)")
         } catch (e: Exception) {
-            Log.e("Threadline", "FeedImporter: import failed: ${e.message}", e)
+            Log.e(TAG, "FeedImporter: import failed: ${e.message}", e)
         }
     }
 }

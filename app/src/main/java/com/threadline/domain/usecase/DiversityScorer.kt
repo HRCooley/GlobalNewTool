@@ -12,14 +12,16 @@ object DiversityScorer {
         "east_asian", "south_asian", "african", "latin_american"
     )
     private val ALL_LEANS = listOf(
-        "establishment", "center_left", "center_right",
+        "center", "establishment", "center_left", "center_right",
         "left_progressive", "right_conservative", "non_aligned"
     )
 
     suspend fun scoreDiversity(cluster: StoryCluster, feedDao: FeedDao): DiversityScore {
         val feedNames = cluster.stories.map { it.sourceName }.distinct()
 
-        val feeds = feedNames.mapNotNull { name -> feedDao.getByName(name) }
+        val feeds = feedNames.mapNotNull { name ->
+            feedDao.getByName(name) ?: feedDao.getByNameFuzzy(name)
+        }
 
         // Dimension 1: Geographic
         val regions = feeds.mapNotNull { it.region }.distinct()
