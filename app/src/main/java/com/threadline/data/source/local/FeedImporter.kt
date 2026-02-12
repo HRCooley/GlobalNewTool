@@ -41,10 +41,10 @@ class FeedImporter @Inject constructor(
                 }
                 if (!obj.has("name") || !obj.has("url")) continue
 
-                val region = obj.optString("region", null)
-                val politicalLean = obj.optString("politicalLean", null)
-                val ownership = obj.optString("ownership", null)
-                val ownerName = obj.optString("ownerName", null)
+                val region = obj.optString("region", "").ifBlank { null }
+                val politicalLean = obj.optString("politicalLean", "").ifBlank { null }
+                val ownership = obj.optString("ownership", "").ifBlank { null }
+                val ownerName = obj.optString("ownerName", "").ifBlank { null }
 
                 feeds.add(
                     ManagedFeedEntity(

@@ -10,11 +10,15 @@ import com.threadline.domain.model.StoryCluster
 import com.threadline.domain.repository.FeedRepository
 import com.threadline.domain.usecase.DiversityScorer
 import com.threadline.domain.usecase.StoryClusterer
+import android.util.Log
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 data class FeedUiState(
@@ -70,13 +74,35 @@ class FeedViewModel @Inject constructor(
     }
 
     private suspend fun processStories(stories: List<NewsStory>) {
-        val clusters = StoryClusterer.clusterStories(stories)
-        val scored = clusters.map { cluster ->
-            val score = DiversityScorer.scoreDiversity(cluster, feedDao)
-            cluster.copy(diversityScore = score)
+        try {
+            val scored = withContext(Dispatchers.Default) {
+                val clusters = StoryClusterer.clusterStories(stories)
+                clusters.map { cluster ->
+                    val score = DiversityScorer.scoreDiversity(cluster, feedDao)
+                    cluster.copy(diversityScore = score)
+                }
+            }
+            allClusters = scored
+            applyFilters()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e("FeedViewModel", "processStories failed: ${e.message}", e)
+            // Fallback: show stories as individual unclustered items
+            val fallbackClusters = stories.map { story ->
+                StoryCluster(
+                    id = story.id,
+                    representativeTitle = story.title,
+                    representativeSummary = story.summary,
+                    stories = listOf(story),
+                    sourceCount = 1,
+                    mostRecent = story.publishedAt,
+                    categories = listOf(story.category)
+                )
+            }
+            allClusters = fallbackClusters
+            applyFilters()
         }
-        allClusters = scored
-        applyFilters()
     }
 
     fun setCategory(category: String) {

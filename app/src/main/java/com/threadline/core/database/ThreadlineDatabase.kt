@@ -28,7 +28,7 @@ import com.threadline.data.source.local.entity.UserInterestEntity
         BoardConnectionEntity::class,
         UserInterestEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class ThreadlineDatabase : RoomDatabase() {
